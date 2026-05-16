@@ -184,6 +184,7 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
 .photo-del{position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:0.68rem;cursor:pointer;font-weight:800;}
 .photo-main-badge{position:absolute;bottom:2px;left:2px;background:var(--gold);color:#000;font-size:0.5rem;font-weight:800;padding:1px 4px;border-radius:3px;}
 .photo-set-main{position:absolute;top:-6px;left:-6px;background:var(--accent2);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:0.65rem;cursor:pointer;font-weight:800;}
+.upload-progress{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:10px 14px;font-size:0.8rem;color:var(--accent2);margin-top:8px;display:none;}
 </style>
 </head>
 <body>
@@ -268,7 +269,7 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
 </div>
 <div id="view-results" class="view">
   <div class="result-box">
-    <div class="r-trophy" id="r-trophy">🏆</div>
+    <div class="r-trophy" id="r-trophy">&#127942;</div>
     <div class="r-name" id="r-name"></div>
     <div class="r-score" id="r-score">0</div>
     <div class="r-sub" id="r-sub"></div>
@@ -301,9 +302,6 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
   <div class="admin-toolbar">
     <input class="admin-search" id="admin-search" placeholder="Buscar modelo..." oninput="renderAdmin()">
     <button class="btn btn-primary" onclick="openAdd()">+ Agregar</button>
-    <button class="btn btn-secondary" onclick="exportData()">&#8595; Exportar</button>
-    <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">&#8593; Importar</button>
-    <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(this)">
     <button class="btn btn-danger" onclick="resetPhotos()">&#128247; Reset fotos</button>
     <span class="sync-badge sync-loading" id="sync-badge">...</span>
   </div>
@@ -335,10 +333,11 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
     <div class="modal-group">
       <label class="modal-label">Foto principal</label>
       <div class="img-preview" id="modal-preview"><span style="color:var(--muted);font-size:0.8rem;">Sin imagen</span></div>
-      <label class="upload-label">&#128247; Cargar imagen<input type="file" accept="image/*" id="modal-file" onchange="previewFile(this)" style="display:none"></label>
+      <label class="upload-label">&#128247; Seleccionar imagen<input type="file" accept="image/*" id="modal-file" onchange="previewFile(this)" style="display:none"></label>
     </div>
+    <div id="modal-progress" class="upload-progress">Subiendo foto...</div>
     <div class="modal-btns">
-      <button class="btn btn-primary" onclick="saveModel()">Guardar</button>
+      <button class="btn btn-primary" id="modal-save-btn" onclick="saveModel()">Guardar</button>
       <button class="btn btn-secondary" onclick="closeModal('modal-model')">Cancelar</button>
     </div>
   </div>
@@ -347,14 +346,19 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
   <div class="modal-box" onclick="event.stopPropagation()">
     <div class="modal-title" id="modal-photos-title">Fotos</div>
     <div class="photos-grid" id="photos-grid"></div>
-    <label class="upload-label" style="margin-bottom:10px;">&#128247; Agregar foto(s)<input type="file" accept="image/*" multiple id="photos-file" onchange="addPhotos(this)" style="display:none"></label>
+    <label class="upload-label" style="margin-bottom:8px;">&#128247; Agregar foto(s)<input type="file" accept="image/*" multiple id="photos-file" onchange="addPhotos(this)" style="display:none"></label>
+    <div id="photos-progress" class="upload-progress">Subiendo...</div>
     <button class="btn btn-secondary" style="width:100%;margin-top:8px;" onclick="closeModal('modal-photos')">Cerrar</button>
   </div>
 </div>
 <script>
 const SB='https://etapmrnynqtqqjleujok.supabase.co';
 const KEY='sb_publishable_1GjAGxMyz7BTBa4NLVzAEw_-GPKqFCN';
+const BUCKET='mda-photos';
+const STORAGE_URL=SB+'/storage/v1/object/'+BUCKET+'/';
+const STORAGE_PUBLIC=SB+'/storage/v1/object/public/'+BUCKET+'/';
 
+/* ── API helpers ── */
 async function sbFetch(path,opts={}){
   const h={'apikey':KEY,'Authorization':'Bearer '+KEY,'Accept':'application/json',...(opts.headers||{})};
   return fetch(SB+path,{...opts,headers:h});
@@ -367,9 +371,38 @@ async function sbPost(path,body){return sbFetch(path,{method:'POST',headers:{'Co
 async function sbPatch(path,body){return sbFetch(path,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});}
 async function sbDelete(path){return sbFetch(path,{method:'DELETE',headers:{'Content-Type':'application/json'}});}
 
-let MACHINES=[],adminUnlocked=false,editingId=null,photosEditingId=null,modalNewImg=null;
-let cfg={q:20,t:10},playerName='',lastScore=0;
+/* ── Storage helpers ── */
+async function uploadPhoto(file, filename){
+  // Resize first
+  const b64 = await resizeImgPromise(file, 400, 520);
+  const blob = b64ToBlob(b64, 'image/jpeg');
+  const r = await fetch(STORAGE_URL+filename, {
+    method:'POST',
+    headers:{'apikey':KEY,'Authorization':'Bearer '+KEY,'Content-Type':'image/jpeg','x-upsert':'true'},
+    body:blob
+  });
+  if(!r.ok){const e=await r.text();throw new Error('Upload failed: '+r.status+' '+e);}
+  return STORAGE_PUBLIC+filename;
+}
+async function deletePhoto(filename){
+  await sbFetch('/storage/v1/object/'+BUCKET+'/'+filename,{method:'DELETE'});
+}
+function b64ToBlob(b64,type){const bytes=atob(b64);const arr=new Uint8Array(bytes.length);for(let i=0;i<bytes.length;i++)arr[i]=bytes.charCodeAt(i);return new Blob([arr],{type});}
+function resizeImgPromise(file,maxW,maxH){
+  return new Promise(resolve=>{
+    const r=new FileReader();
+    r.onload=e=>{const img=new Image();img.onload=()=>{let w=img.width,h=img.height;const ratio=Math.min(maxW/w,maxH/h,1);w=Math.round(w*ratio);h=Math.round(h*ratio);const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);resolve(c.toDataURL('image/jpeg',0.84).split(',')[1]);};img.src=e.target.result;};
+    r.readAsDataURL(file);
+  });
+}
+function makeFilename(machineId, index){return 'machine_'+machineId+'_'+index+'_'+Date.now()+'.jpg';}
+function getImgUrl(url){return url?url+'?t='+Date.now():'';}
 
+/* ── State ── */
+let MACHINES=[], adminUnlocked=false, editingId=null, photosEditingId=null, modalNewFile=null, modalPreviewB64=null;
+let cfg={q:20,t:10}, playerName='', lastScore=0;
+
+/* ── NAV ── */
 function goTo(v){
   document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
   document.getElementById('view-'+v).classList.add('active');
@@ -377,21 +410,27 @@ function goTo(v){
     (v==='catalog'&&i===0)||((v==='setup'||v==='quiz'||v==='results')&&i===1)||(v==='ranking'&&i===2)||(v==='admin'&&i===3)));
   if(v==='ranking'){loadRanking();loadPrizeText();}
   if(v==='setup'){
-    const pw=MACHINES.filter(m=>m.img).length;
+    const pw=MACHINES.filter(m=>m.photo_url).length;
     const w=document.getElementById('no-img-warn');if(w)w.style.display=pw<4?'block':'none';
     const ct=document.getElementById('chip-todas');if(ct)ct.textContent='Todas ('+pw+')';
   }
 }
 
+/* ── LOAD MACHINES ── */
 async function loadMachines(){
   setSyncBadge('loading');
   try{
-    const rows=await sbGet('/rest/v1/machines?order=sort_order.asc&limit=500');
-    const li=JSON.parse(localStorage.getItem('mda_imgs')||'{}');
-    MACHINES=rows.map(r=>({...r,img:li[r.id]?.main||'',imgs:li[r.id]?.extra||[]}));
+    // machines table now has: id, name, sort_order, photo_url (main), photo_urls (array of extras as JSON)
+    const rows=await sbGet('/rest/v1/machines?order=sort_order.asc&limit=500&select=id,name,sort_order,photo_url,photo_urls');
+    MACHINES=rows.map(r=>({
+      ...r,
+      photo_url: r.photo_url||'',
+      photo_urls: r.photo_urls ? (typeof r.photo_urls==='string'?JSON.parse(r.photo_urls):r.photo_urls) : []
+    }));
     setSyncBadge('ok');
   }catch(e){setSyncBadge('err');MACHINES=[];}
-  buildCatalog();updateCounts();renderAdmin();
+  buildCatalog();updateCounts();
+  if(adminUnlocked)renderAdmin();
 }
 
 function setSyncBadge(s){
@@ -400,18 +439,18 @@ function setSyncBadge(s){
   else if(s==='err'){el.className='sync-badge sync-err';el.textContent='Sin conexion';}
   else{el.className='sync-badge sync-loading';el.textContent='...';}
 }
-function saveLocalImgs(){
-  const o={};MACHINES.forEach(m=>{if(m.img||m.imgs?.length)o[m.id]={main:m.img,extra:m.imgs||[]};});
-  try{localStorage.setItem('mda_imgs',JSON.stringify(o));}catch(e){alert('Almacenamiento lleno.');}
-}
+
+/* ── CATALOG ── */
 function buildCatalog(){
   const g=document.getElementById('grid');g.innerHTML='';
   if(!MACHINES.length){g.innerHTML='<div class="loading">Sin modelos. Agrega desde Admin.</div>';return;}
   MACHINES.forEach(m=>{
     const c=document.createElement('div');c.className='card';c.dataset.name=m.name.toLowerCase();
-    const ih=m.img?'<img src="data:image/jpeg;base64,'+m.img+'" loading="lazy" draggable="false">':'<div class="card-no-img">&#127920;</div>';
+    const ih=m.photo_url
+      ?'<img src="'+getImgUrl(m.photo_url)+'" loading="lazy" draggable="false">'
+      :'<div class="card-no-img">&#127920;</div>';
     c.innerHTML='<div class="card-img">'+ih+'</div><div class="card-label">'+m.name+'</div>';
-    if(m.img)c.onclick=()=>{document.getElementById('lb-img').src='data:image/jpeg;base64,'+m.img;document.getElementById('lb-name').textContent=m.name;document.getElementById('lightbox').classList.add('open');};
+    if(m.photo_url)c.onclick=()=>{document.getElementById('lb-img').src=getImgUrl(m.photo_url);document.getElementById('lb-name').textContent=m.name;document.getElementById('lightbox').classList.add('open');};
     g.appendChild(c);
   });
   filterCatalog();
@@ -424,11 +463,12 @@ function filterCatalog(){
 function closeLb(){document.getElementById('lightbox').classList.remove('open');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeLb();document.querySelectorAll('.modal').forEach(m=>m.classList.remove('open'));}});
 function updateCounts(){
-  const n=MACHINES.length,wi=MACHINES.filter(m=>m.img).length;
+  const n=MACHINES.length,wi=MACHINES.filter(m=>m.photo_url).length;
   const ac=document.getElementById('admin-count');if(ac)ac.textContent='('+n+' total, '+wi+' con foto)';
   const ct=document.getElementById('chip-todas');if(ct)ct.textContent='Todas ('+wi+')';
 }
 
+/* ── QUIZ ── */
 const CIRC=131.9;
 let qCorrect=0,qWrong=0,qScore=0,qIdx=-1,qAnswered=false,qQueue=[],qTotal=0,qNum=0,qStart=0,timerInt=null,autoTO=null;
 function pickChip(g,v,el){cfg[g]=v;el.closest('.chips').querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));el.classList.add('active');}
@@ -437,8 +477,14 @@ function calcPts(ms){return Math.round((100-90*Math.min(ms/(cfg.t*1000),1))*time
 
 function startQuiz(){
   playerName=document.getElementById('player-name').value.trim();
-  if(!playerName){const inp=document.getElementById('player-name');inp.style.borderColor='var(--red)';inp.focus();inp.placeholder='Debes escribir tu nombre';setTimeout(()=>{inp.style.borderColor='';inp.placeholder='Escribe tu nombre...';},2500);return;}
-  const pl=MACHINES.filter(m=>m.img);
+  if(!playerName){
+    const inp=document.getElementById('player-name');
+    inp.style.borderColor='var(--red)';inp.focus();
+    inp.placeholder='Debes escribir tu nombre';
+    setTimeout(()=>{inp.style.borderColor='';inp.placeholder='Escribe tu nombre...';},2500);
+    return;
+  }
+  const pl=MACHINES.filter(m=>m.photo_url);
   if(pl.length<4){alert('Necesitas al menos 4 modelos con foto.');return;}
   const cnt=cfg.q>=999?pl.length:Math.min(cfg.q,pl.length);
   qQueue=shuffle(pl.map((_,i)=>i)).slice(0,cnt);
@@ -451,13 +497,14 @@ function nextQ(){
   document.getElementById('fb-msg').textContent='';
   document.getElementById('fb-pts').style.display='none';
   document.getElementById('auto-bar-wrap').style.display='none';
-  const pl=MACHINES.filter(m=>m.img);
+  const pl=MACHINES.filter(m=>m.photo_url);
   const m=pl[qQueue[qNum]];qNum++;
   qIdx=MACHINES.indexOf(m);
   document.getElementById('prog-lbl').textContent=qNum+'/'+qTotal;
   document.getElementById('prog-bar').style.width=((qNum-1)/qTotal*100)+'%';
   const img=document.getElementById('quiz-img');
-  img.style.opacity='0.3';setTimeout(()=>{img.src='data:image/jpeg;base64,'+m.img;img.style.opacity='1';},80);
+  img.style.opacity='0.3';
+  setTimeout(()=>{img.src=getImgUrl(m.photo_url);img.style.opacity='1';},80);
   const cn=m.name;
   const pool=shuffle(pl.filter((x,i)=>i!==qQueue[qNum-1]&&x.name!==cn));
   const allOpts=shuffle([m,...pool.slice(0,3)]);
@@ -510,7 +557,8 @@ function updateQStats(){document.getElementById('q-ok').textContent=qCorrect;doc
 async function endQuiz(){
   clearTimers();
   const acc=Math.round(qCorrect/qTotal*100);lastScore=qScore;
-  document.getElementById('r-trophy').textContent=acc>=90?'🏆':acc>=70?'🥈':acc>=50?'🥉':'💪';
+  const trophies=['&#127942;','&#129352;','&#129353;','&#128170;'];
+  document.getElementById('r-trophy').innerHTML=acc>=90?trophies[0]:acc>=70?trophies[1]:acc>=50?trophies[2]:trophies[3];
   document.getElementById('r-name').textContent=playerName;
   document.getElementById('r-score').textContent=qScore;
   document.getElementById('r-sub').textContent=qCorrect+' correctas de '+qTotal+' · '+cfg.t+'s';
@@ -521,20 +569,18 @@ async function endQuiz(){
   renderLeaderboard();loadRanking();goTo('results');
 }
 
+/* ── SCORES ── */
 async function saveScore(name,pts,correct,total,sec,accuracy){try{await sbPost('/rest/v1/scores',{name,pts,correct,total,timer_sec:sec,accuracy});}catch(e){}}
 async function recordAnswer(mn,correct,timeMs,pts){try{await sbPost('/rest/v1/quiz_answers',{player_name:playerName,machine_name:mn,correct,time_ms:timeMs,pts,timer_sec:cfg.t});}catch(e){}}
+function getClaveHora(){const n=new Date();return String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0');}
 
 async function clearScores(){
   const input=prompt('Clave:');if(!input)return;
   if(input.trim()!==getClaveHora()){alert('Clave incorrecta.');return;}
   try{
-    const r1=await sbDelete('/rest/v1/scores?id=gt.0');
-    const t1=await r1.text();
-    alert('Status: '+r1.status+' | Respuesta: '+t1.slice(0,200));
-    if(r1.ok||r1.status===204){
-      await sbDelete('/rest/v1/quiz_answers?id=gt.0');
-      renderLeaderboard();loadRanking();
-    }
+    const [r1,r2]=await Promise.all([sbDelete('/rest/v1/scores?id=gt.0'),sbDelete('/rest/v1/quiz_answers?id=gt.0')]);
+    if(r1.ok||r1.status===204){alert('Puntajes borrados.');renderLeaderboard();loadRanking();}
+    else{const t=await r1.text();alert('Error '+r1.status+': '+t);}
   }catch(e){alert('Error: '+e.message);}
 }
 
@@ -559,18 +605,18 @@ async function loadRanking(){
     const r=await sbFetch('/rest/v1/scores?order=pts.desc&limit=100');
     if(!r.ok){const e=await r.text();body.innerHTML='<div class="no-data">Error '+r.status+': '+e+'</div>';return;}
     const s=await r.json();
-    if(!s.length){body.innerHTML='<div class="no-data">Sin puntajes aun. Se el primero!</div>';return;}
+    if(!s.length){body.innerHTML='<div class="no-data">Sin puntajes aun!</div>';return;}
     const M=['&#129351;','&#129352;','&#129353;'];
     body.innerHTML='<table><thead><tr><th>#</th><th>Nombre</th><th>Puntos</th><th>Prec.</th><th>Seg.</th><th>Fecha</th></tr></thead><tbody>'+
       s.map((x,i)=>{const f=new Date(x.created_at).toLocaleDateString('es-CL');
         return '<tr class="rank-'+(i+1)+'"><td>'+(M[i]||i+1)+'</td><td><strong>'+x.name+'</strong></td><td style="color:var(--gold);font-weight:800">'+x.pts+'</td><td>'+(x.accuracy||0)+'%</td><td>'+(x.timer_sec||'?')+'s</td><td style="color:var(--muted)">'+f+'</td></tr>';
       }).join('')+'</tbody></table>';
-  }catch(e){body.innerHTML='<div class="no-data">Error de conexion: '+e.message+'</div>';}
+  }catch(e){body.innerHTML='<div class="no-data">Error: '+e.message+'</div>';}
 }
 
+/* ── PRIZE ── */
 async function loadPrizeText(){
-  try{const r=await sbGet('/rest/v1/announcements?id=eq.1');const t=r[0]?.text||'';localStorage.setItem('mda_prize',t);renderPrizeBanner(t);const pi=document.getElementById('prize-input');if(pi)pi.value=t;}
-  catch(e){renderPrizeBanner(localStorage.getItem('mda_prize')||'');}
+  try{const r=await sbGet('/rest/v1/announcements?id=eq.1');const t=r[0]?.text||'';renderPrizeBanner(t);const pi=document.getElementById('prize-input');if(pi)pi.value=t;}catch(e){}
 }
 function renderPrizeBanner(text){
   const w=document.getElementById('prize-banner-wrap');if(!w)return;
@@ -578,94 +624,203 @@ function renderPrizeBanner(text){
 }
 async function savePrizeText(){
   const text=document.getElementById('prize-input')?.value.trim()||'';
-  try{await sbFetch('/rest/v1/announcements',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({id:1,text})});localStorage.setItem('mda_prize',text);renderPrizeBanner(text);alert('Guardado.');}
+  try{await sbFetch('/rest/v1/announcements',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({id:1,text})});renderPrizeBanner(text);alert('Guardado.');}
   catch(e){alert('Error al guardar.');}
 }
 
-function getClaveHora(){const n=new Date();return String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0');}
+/* ── ADMIN ── */
 async function adminLogin(){
-  if(adminUnlocked){goTo('admin');loadStats();loadPrizeText();return;}
+  if(adminUnlocked){goTo('admin');renderAdmin();loadStats();loadPrizeText();return;}
   const input=prompt('Clave:');if(!input)return;
-  if(input.trim()===getClaveHora()){adminUnlocked=true;goTo('admin');loadStats();loadPrizeText();}
+  if(input.trim()===getClaveHora()){adminUnlocked=true;goTo('admin');renderAdmin();loadStats();loadPrizeText();}
   else alert('Clave incorrecta.');
 }
-
 function renderAdmin(){
   const q=(document.getElementById('admin-search')?.value||'').toLowerCase();
   const list=document.getElementById('admin-list');if(!list)return;list.innerHTML='';
   MACHINES.filter(m=>m.name.toLowerCase().includes(q)).forEach(m=>{
     const row=document.createElement('div');row.className='model-row';
-    const th=m.img?'<img class="model-thumb" src="data:image/jpeg;base64,'+m.img+'" draggable="false">':'<div class="model-thumb-empty">&#127920;</div>';
-    row.innerHTML=th+'<div class="model-info"><div class="model-name">'+m.name+'</div><div class="model-meta">'+(m.img?((m.imgs?.length||0)+1+' foto(s)'):'Sin foto')+' · ID:'+m.id+'</div></div>'+
+    const th=m.photo_url?'<img class="model-thumb" src="'+getImgUrl(m.photo_url)+'" draggable="false">':'<div class="model-thumb-empty">&#127920;</div>';
+    const extras=m.photo_urls?.length||0;
+    row.innerHTML=th+'<div class="model-info"><div class="model-name">'+m.name+'</div><div class="model-meta">'+(m.photo_url?(extras+1+' foto(s)'):'Sin foto')+' · ID:'+m.id+'</div></div>'+
       '<div class="model-actions"><button class="btn btn-secondary btn-sm" onclick="openPhotos('+m.id+')">&#128247;</button><button class="btn btn-secondary btn-sm" onclick="openEdit('+m.id+')">&#9998;</button><button class="btn btn-danger btn-sm" onclick="deleteModel('+m.id+')">&#128465;</button></div>';
     list.appendChild(row);
   });
   updateCounts();
 }
-function openAdd(){editingId=null;modalNewImg=null;document.getElementById('modal-title').textContent='Agregar modelo';document.getElementById('modal-name').value='';document.getElementById('modal-preview').innerHTML='<span style="color:var(--muted);font-size:0.8rem;">Sin imagen</span>';document.getElementById('modal-file').value='';openModal('modal-model');}
-function openEdit(id){const m=MACHINES.find(x=>x.id===id);if(!m)return;editingId=id;modalNewImg=null;document.getElementById('modal-title').textContent='Editar: '+m.name;document.getElementById('modal-name').value=m.name;document.getElementById('modal-preview').innerHTML=m.img?'<img src="data:image/jpeg;base64,'+m.img+'" style="max-height:130px;max-width:100%;border-radius:6px;">':'<span style="color:var(--muted);">Sin imagen</span>';document.getElementById('modal-file').value='';openModal('modal-model');}
-function previewFile(input){if(!input.files[0])return;resizeImg(input.files[0],400,520,b64=>{modalNewImg=b64;document.getElementById('modal-preview').innerHTML='<img src="data:image/jpeg;base64,'+b64+'" style="max-height:130px;max-width:100%;border-radius:6px;">';});}
+
+function openAdd(){
+  editingId=null;modalNewFile=null;modalPreviewB64=null;
+  document.getElementById('modal-title').textContent='Agregar modelo';
+  document.getElementById('modal-name').value='';
+  document.getElementById('modal-preview').innerHTML='<span style="color:var(--muted);font-size:0.8rem;">Sin imagen</span>';
+  document.getElementById('modal-file').value='';
+  document.getElementById('modal-progress').style.display='none';
+  openModal('modal-model');
+}
+function openEdit(id){
+  const m=MACHINES.find(x=>x.id===id);if(!m)return;
+  editingId=id;modalNewFile=null;modalPreviewB64=null;
+  document.getElementById('modal-title').textContent='Editar: '+m.name;
+  document.getElementById('modal-name').value=m.name;
+  document.getElementById('modal-preview').innerHTML=m.photo_url?'<img src="'+getImgUrl(m.photo_url)+'" style="max-height:130px;max-width:100%;border-radius:6px;">':'<span style="color:var(--muted);">Sin imagen</span>';
+  document.getElementById('modal-file').value='';
+  document.getElementById('modal-progress').style.display='none';
+  openModal('modal-model');
+}
+function previewFile(input){
+  if(!input.files[0])return;
+  modalNewFile=input.files[0];
+  resizeImgPromise(input.files[0],400,520).then(b64=>{
+    modalPreviewB64=b64;
+    document.getElementById('modal-preview').innerHTML='<img src="data:image/jpeg;base64,'+b64+'" style="max-height:130px;max-width:100%;border-radius:6px;">';
+  });
+}
 async function saveModel(){
-  const name=document.getElementById('modal-name').value.trim();if(!name){alert('Nombre obligatorio.');return;}
+  const name=document.getElementById('modal-name').value.trim();
+  if(!name){alert('Nombre obligatorio.');return;}
+  const prog=document.getElementById('modal-progress');
+  const saveBtn=document.getElementById('modal-save-btn');
+  saveBtn.disabled=true;
   if(editingId===null){
-    if(!modalNewImg){alert('Agrega una foto.');return;}
-    const res=await sbPost('/rest/v1/machines',{name,sort_order:MACHINES.length+1});
-    if(!res.ok){const e=await res.text();alert('Error: '+e);return;}
+    if(!modalNewFile){alert('Agrega una foto.');saveBtn.disabled=false;return;}
+    prog.style.display='block';prog.textContent='Guardando nombre...';
+    const res=await sbPost('/rest/v1/machines',{name,sort_order:MACHINES.length+1,photo_url:'',photo_urls:'[]'});
+    if(!res.ok){const e=await res.text();alert('Error: '+e);saveBtn.disabled=false;prog.style.display='none';return;}
     const rows=await sbGet('/rest/v1/machines?name=eq.'+encodeURIComponent(name)+'&order=id.desc&limit=1');
-    MACHINES.push({id:rows[0]?.id||Date.now(),name,sort_order:MACHINES.length,img:modalNewImg,imgs:[]});
+    const newId=rows[0]?.id;
+    if(!newId){alert('Error al obtener ID.');saveBtn.disabled=false;prog.style.display='none';return;}
+    prog.textContent='Subiendo foto...';
+    try{
+      const filename=makeFilename(newId,0);
+      const url=await uploadPhoto(modalNewFile,filename);
+      await sbPatch('/rest/v1/machines?id=eq.'+newId,{photo_url:url});
+      MACHINES.push({id:newId,name,sort_order:MACHINES.length,photo_url:url,photo_urls:[]});
+    }catch(e){alert('Nombre guardado pero error en foto: '+e.message);}
   }else{
-    const m=MACHINES.find(x=>x.id===editingId);if(!m)return;
-    const res=await sbPatch('/rest/v1/machines?id=eq.'+editingId,{name});if(!res.ok){const e=await res.text();alert('Error: '+e);return;}
-    m.name=name;if(modalNewImg)m.img=modalNewImg;
+    const m=MACHINES.find(x=>x.id===editingId);if(!m){saveBtn.disabled=false;return;}
+    prog.style.display='block';prog.textContent='Guardando...';
+    const updateData={name};
+    if(modalNewFile){
+      prog.textContent='Subiendo foto...';
+      try{const filename=makeFilename(editingId,Date.now());const url=await uploadPhoto(modalNewFile,filename);updateData.photo_url=url;m.photo_url=url;}
+      catch(e){alert('Error en foto: '+e.message);}
+    }
+    await sbPatch('/rest/v1/machines?id=eq.'+editingId,updateData);
+    m.name=name;
   }
-  saveLocalImgs();closeModal('modal-model');buildCatalog();renderAdmin();updateCounts();
+  prog.style.display='none';saveBtn.disabled=false;
+  await loadMachines();
+  closeModal('modal-model');
 }
+
 async function deleteModel(id){
-  const m=MACHINES.find(x=>x.id===id);if(!confirm('Eliminar "'+m?.name+'"?'))return;
-  const res=await sbDelete('/rest/v1/machines?id=eq.'+id);if(!res.ok){const e=await res.text();alert('Error: '+e);return;}
-  MACHINES=MACHINES.filter(x=>x.id!==id);saveLocalImgs();buildCatalog();renderAdmin();updateCounts();
+  const m=MACHINES.find(x=>x.id===id);
+  if(!confirm('Eliminar "'+m?.name+'"?'))return;
+  const res=await sbDelete('/rest/v1/machines?id=eq.'+id);
+  if(!res.ok){const e=await res.text();alert('Error: '+e);return;}
+  MACHINES=MACHINES.filter(x=>x.id!==id);
+  buildCatalog();renderAdmin();updateCounts();
 }
-function openPhotos(id){photosEditingId=id;const m=MACHINES.find(x=>x.id===id);document.getElementById('modal-photos-title').textContent='Fotos: '+(m?.name||'');renderPhotosGrid();openModal('modal-photos');}
+
+/* ── PHOTOS ── */
+function openPhotos(id){
+  photosEditingId=id;
+  const m=MACHINES.find(x=>x.id===id);
+  document.getElementById('modal-photos-title').textContent='Fotos: '+(m?.name||'');
+  document.getElementById('photos-progress').style.display='none';
+  renderPhotosGrid();openModal('modal-photos');
+}
 function renderPhotosGrid(){
   const m=MACHINES.find(x=>x.id===photosEditingId);if(!m)return;
   const g=document.getElementById('photos-grid');g.innerHTML='';
-  if(m.img){const mw=document.createElement('div');mw.className='photo-wrap';mw.innerHTML='<img src="data:image/jpeg;base64,'+m.img+'" draggable="false"><span class="photo-main-badge">MAIN</span>';const md=document.createElement('button');md.className='photo-del';md.textContent='x';md.onclick=()=>{if(!m.imgs?.length){alert('No se puede eliminar la unica foto.');return;}m.img=m.imgs.shift();saveLocalImgs();renderPhotosGrid();buildCatalog();renderAdmin();};mw.appendChild(md);g.appendChild(mw);}
-  (m.imgs||[]).forEach((b64,j)=>{const ew=document.createElement('div');ew.className='photo-wrap';ew.innerHTML='<img src="data:image/jpeg;base64,'+b64+'" draggable="false">';const es=document.createElement('button');es.className='photo-set-main';es.textContent='v';es.onclick=()=>{const old=m.img;m.img=b64;m.imgs.splice(j,1);if(old)m.imgs.unshift(old);saveLocalImgs();renderPhotosGrid();buildCatalog();renderAdmin();};const ed=document.createElement('button');ed.className='photo-del';ed.textContent='x';ed.onclick=()=>{m.imgs.splice(j,1);saveLocalImgs();renderPhotosGrid();buildCatalog();renderAdmin();};ew.appendChild(es);ew.appendChild(ed);g.appendChild(ew);});
-  if(!m.img&&!m.imgs?.length)g.innerHTML='<div style="color:var(--muted);font-size:0.82rem;">Sin fotos.</div>';
+  if(m.photo_url){
+    const mw=document.createElement('div');mw.className='photo-wrap';
+    mw.innerHTML='<img src="'+getImgUrl(m.photo_url)+'" draggable="false"><span class="photo-main-badge">MAIN</span>';
+    const md=document.createElement('button');md.className='photo-del';md.textContent='x';
+    md.onclick=async()=>{
+      if(!m.photo_urls?.length){alert('No puedes eliminar la unica foto.');return;}
+      const newMain=m.photo_urls[0];
+      m.photo_url=newMain;m.photo_urls=m.photo_urls.slice(1);
+      await sbPatch('/rest/v1/machines?id=eq.'+m.id,{photo_url:newMain,photo_urls:JSON.stringify(m.photo_urls)});
+      renderPhotosGrid();buildCatalog();renderAdmin();
+    };
+    mw.appendChild(md);g.appendChild(mw);
+  }
+  (m.photo_urls||[]).forEach((url,j)=>{
+    const ew=document.createElement('div');ew.className='photo-wrap';
+    ew.innerHTML='<img src="'+getImgUrl(url)+'" draggable="false">';
+    const es=document.createElement('button');es.className='photo-set-main';es.textContent='v';
+    es.onclick=async()=>{
+      const old=m.photo_url;m.photo_url=url;m.photo_urls.splice(j,1);if(old)m.photo_urls.unshift(old);
+      await sbPatch('/rest/v1/machines?id=eq.'+m.id,{photo_url:url,photo_urls:JSON.stringify(m.photo_urls)});
+      renderPhotosGrid();buildCatalog();renderAdmin();
+    };
+    const ed=document.createElement('button');ed.className='photo-del';ed.textContent='x';
+    ed.onclick=async()=>{
+      m.photo_urls.splice(j,1);
+      await sbPatch('/rest/v1/machines?id=eq.'+m.id,{photo_urls:JSON.stringify(m.photo_urls)});
+      renderPhotosGrid();buildCatalog();renderAdmin();
+    };
+    ew.appendChild(es);ew.appendChild(ed);g.appendChild(ew);
+  });
+  if(!m.photo_url&&!m.photo_urls?.length)g.innerHTML='<div style="color:var(--muted);font-size:0.82rem;">Sin fotos.</div>';
 }
-function addPhotos(input){
+
+async function addPhotos(input){
   const m=MACHINES.find(x=>x.id===photosEditingId);if(!m||!input.files.length)return;
-  if(!m.imgs)m.imgs=[];let done=0;const total=input.files.length;
-  Array.from(input.files).forEach(f=>{resizeImg(f,400,520,b64=>{if(!m.img){m.img=b64;}else{m.imgs.push(b64);}done++;if(done===total){saveLocalImgs();renderPhotosGrid();buildCatalog();}});});
+  if(!m.photo_urls)m.photo_urls=[];
+  const prog=document.getElementById('photos-progress');
+  prog.style.display='block';
+  const files=Array.from(input.files);
+  for(let i=0;i<files.length;i++){
+    prog.textContent='Subiendo foto '+(i+1)+' de '+files.length+'...';
+    try{
+      const filename=makeFilename(m.id,i+'_'+Date.now());
+      const url=await uploadPhoto(files[i],filename);
+      if(!m.photo_url){m.photo_url=url;await sbPatch('/rest/v1/machines?id=eq.'+m.id,{photo_url:url,photo_urls:JSON.stringify(m.photo_urls)});}
+      else{m.photo_urls.push(url);await sbPatch('/rest/v1/machines?id=eq.'+m.id,{photo_urls:JSON.stringify(m.photo_urls)});}
+    }catch(e){alert('Error foto '+(i+1)+': '+e.message);}
+  }
+  prog.style.display='none';
+  renderPhotosGrid();buildCatalog();renderAdmin();
   input.value='';
 }
-function resetPhotos(){
-  if(!confirm('Se eliminaran TODAS las fotos. Los nombres quedan. Continuar?'))return;
-  localStorage.removeItem('mda_imgs');MACHINES.forEach(m=>{m.img='';m.imgs=[];});buildCatalog();renderAdmin();updateCounts();alert('Fotos eliminadas.');
-}
-function exportData(){const data=MACHINES.map(m=>({id:m.id,name:m.name,sort_order:m.sort_order,img:m.img||'',imgs:m.imgs||[]}));const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='mda_backup_'+new Date().toISOString().slice(0,10)+'.json';a.click();}
-function importData(input){if(!input.files[0])return;const reader=new FileReader();reader.onload=async e=>{try{const p=JSON.parse(e.target.result);if(!Array.isArray(p)||!p[0]?.name)throw new Error('Formato invalido');if(!confirm('Importar '+p.length+' modelos?'))return;MACHINES=p.map(m=>({...m,img:m.img||'',imgs:m.imgs||[]}));saveLocalImgs();buildCatalog();renderAdmin();updateCounts();alert('Importado.');}catch(err){alert('Error: '+err.message);}};reader.readAsText(input.files[0]);input.value='';}
 
+function resetPhotos(){
+  if(!confirm('Se eliminaran TODAS las fotos de la base de datos. Los nombres quedan. Continuar?'))return;
+  // Just clear photo_url and photo_urls for all machines locally
+  // User will need to re-upload
+  MACHINES.forEach(async m=>{
+    m.photo_url='';m.photo_urls=[];
+    await sbPatch('/rest/v1/machines?id=eq.'+m.id,{photo_url:'',photo_urls:'[]'});
+  });
+  buildCatalog();renderAdmin();updateCounts();
+  alert('Fotos eliminadas de la base de datos.');
+}
+
+/* ── STATS ── */
 async function loadStats(){
   ['stats-global','stats-players','stats-machines-acc','stats-speed','stats-activity'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='<div class="loading">Cargando...</div>';});
   const [scores,answers]=await Promise.all([sbGet('/rest/v1/scores?order=pts.desc&limit=1000'),sbGet('/rest/v1/quiz_answers?order=created_at.desc&limit=5000')]);
   const sg=document.getElementById('stats-global');
   if(sg){const tg=scores.length,ta=answers.length,tok=answers.filter(a=>a.correct).length,ga=ta?Math.round(tok/ta*100):0,best=scores.length?Math.max(...scores.map(s=>s.pts)):0,pl=[...new Set(scores.map(s=>s.name))].length;sg.innerHTML=sc(tg,'Partidas','purple')+sc(pl,'Jugadores','blue')+sc(ga+'%','Precision global','green')+sc(best,'Mejor puntaje','gold');}
   const sp=document.getElementById('stats-players');
-  if(sp){const pm={};scores.forEach(s=>{if(!pm[s.name])pm[s.name]={name:s.name,games:0,best:0,accSum:0,last10:[]};const p=pm[s.name];p.games++;if(s.pts>p.best)p.best=s.pts;p.accSum+=s.accuracy||0;p.last10.unshift(s);});const pa=Object.values(pm).sort((a,b)=>b.best-a.best);if(!pa.length){sp.innerHTML='<div class="no-data">Sin datos.</div>';}else{sp.innerHTML='<table><thead><tr><th>#</th><th>Jugador</th><th>Partidas</th><th>Mejor</th><th>Prec.prom.</th><th>Ultimos 10</th></tr></thead><tbody>'+pa.map((p,i)=>{const avg=Math.round(p.accSum/p.games);const last=p.last10.slice(0,10).map(s=>'<span class="pill '+(s.accuracy>=70?'g':s.accuracy>=40?'y':'r')+'" title="'+new Date(s.created_at).toLocaleDateString('es-CL')+'">'+s.pts+'</span>').join(' ');return '<tr><td>'+(i+1)+'</td><td><strong>'+p.name+'</strong></td><td>'+p.games+'</td><td style="color:var(--gold);font-weight:800">'+p.best+'</td><td>'+avg+'%<div class="acc-bar"><div class="acc-fill" style="width:'+avg+'%;background:'+(avg>=70?'var(--green)':avg>=40?'var(--gold)':'var(--red)')+'"></div></div></td><td>'+last+'</td></tr>';}).join('')+'</tbody></table>';}}
+  if(sp){const pm={};scores.forEach(s=>{if(!pm[s.name])pm[s.name]={name:s.name,games:0,best:0,accSum:0,last10:[]};const p=pm[s.name];p.games++;if(s.pts>p.best)p.best=s.pts;p.accSum+=s.accuracy||0;p.last10.unshift(s);});const pa=Object.values(pm).sort((a,b)=>b.best-a.best);sp.innerHTML=pa.length?'<table><thead><tr><th>#</th><th>Jugador</th><th>Partidas</th><th>Mejor</th><th>Prec.prom.</th><th>Ultimos 10</th></tr></thead><tbody>'+pa.map((p,i)=>{const avg=Math.round(p.accSum/p.games);const last=p.last10.slice(0,10).map(s=>'<span class="pill '+(s.accuracy>=70?'g':s.accuracy>=40?'y':'r')+'" title="'+new Date(s.created_at).toLocaleDateString('es-CL')+'">'+s.pts+'</span>').join(' ');return '<tr><td>'+(i+1)+'</td><td><strong>'+p.name+'</strong></td><td>'+p.games+'</td><td style="color:var(--gold);font-weight:800">'+p.best+'</td><td>'+avg+'%<div class="acc-bar"><div class="acc-fill" style="width:'+avg+'%;background:'+(avg>=70?'var(--green)':avg>=40?'var(--gold)':'var(--red)')+'"></div></div></td><td>'+last+'</td></tr>';}).join('')+'</tbody></table>':'<div class="no-data">Sin datos.</div>';}
   const sm=document.getElementById('stats-machines-acc');
-  if(sm){const ma={};answers.forEach(a=>{if(!ma[a.machine_name])ma[a.machine_name]={name:a.machine_name,ok:0,total:0,tSum:0};ma[a.machine_name].total++;if(a.correct)ma[a.machine_name].ok++;ma[a.machine_name].tSum+=a.time_ms||0;});const marr=Object.values(ma).sort((a,b)=>(a.ok/a.total)-(b.ok/b.total));if(!marr.length){sm.innerHTML='<div class="no-data">Sin datos.</div>';}else{sm.innerHTML='<table><thead><tr><th>Modelo</th><th>Veces</th><th>Aciertos</th><th>Errores</th><th>Tasa</th></tr></thead><tbody>'+marr.map(m=>{const acc=Math.round(m.ok/m.total*100);const col=acc>=70?'var(--green)':acc>=40?'var(--gold)':'var(--red)';return '<tr><td><strong>'+m.name+'</strong></td><td>'+m.total+'</td><td style="color:var(--green)">'+m.ok+'</td><td style="color:var(--red)">'+(m.total-m.ok)+'</td><td>'+acc+'%<div class="acc-bar"><div class="acc-fill" style="width:'+acc+'%;background:'+col+'"></div></div></td></tr>';}).join('')+'</tbody></table>';}}
+  if(sm){const ma={};answers.forEach(a=>{if(!ma[a.machine_name])ma[a.machine_name]={name:a.machine_name,ok:0,total:0};ma[a.machine_name].total++;if(a.correct)ma[a.machine_name].ok++;});const marr=Object.values(ma).sort((a,b)=>(a.ok/a.total)-(b.ok/b.total));sm.innerHTML=marr.length?'<table><thead><tr><th>Modelo</th><th>Veces</th><th>Aciertos</th><th>Errores</th><th>Tasa</th></tr></thead><tbody>'+marr.map(m=>{const acc=Math.round(m.ok/m.total*100);const col=acc>=70?'var(--green)':acc>=40?'var(--gold)':'var(--red)';return '<tr><td><strong>'+m.name+'</strong></td><td>'+m.total+'</td><td style="color:var(--green)">'+m.ok+'</td><td style="color:var(--red)">'+(m.total-m.ok)+'</td><td>'+acc+'%<div class="acc-bar"><div class="acc-fill" style="width:'+acc+'%;background:'+col+'"></div></div></td></tr>';}).join('')+'</tbody></table>':'<div class="no-data">Sin datos.</div>';}
   const ss=document.getElementById('stats-speed');
-  if(ss){const sa={};answers.forEach(a=>{if(!sa[a.machine_name])sa[a.machine_name]={name:a.machine_name,total:0,tSum:0};sa[a.machine_name].total++;sa[a.machine_name].tSum+=a.time_ms||0;});const sarr=Object.values(sa).sort((a,b)=>(a.tSum/a.total)-(b.tSum/b.total));if(!sarr.length){ss.innerHTML='<div class="no-data">Sin datos.</div>';}else{ss.innerHTML='<table><thead><tr><th>Modelo</th><th>Tiempo promedio</th><th>Respuestas</th></tr></thead><tbody>'+sarr.map(m=>{const avg=Math.round(m.tSum/m.total/100)/10;return '<tr><td><strong>'+m.name+'</strong></td><td>'+avg+'s</td><td>'+m.total+'</td></tr>';}).join('')+'</tbody></table>';}}
+  if(ss){const sa={};answers.forEach(a=>{if(!sa[a.machine_name])sa[a.machine_name]={name:a.machine_name,total:0,tSum:0};sa[a.machine_name].total++;sa[a.machine_name].tSum+=a.time_ms||0;});const sarr=Object.values(sa).sort((a,b)=>(a.tSum/a.total)-(b.tSum/b.total));ss.innerHTML=sarr.length?'<table><thead><tr><th>Modelo</th><th>Tiempo promedio</th><th>Respuestas</th></tr></thead><tbody>'+sarr.map(m=>{const avg=Math.round(m.tSum/m.total/100)/10;return '<tr><td><strong>'+m.name+'</strong></td><td>'+avg+'s</td><td>'+m.total+'</td></tr>';}).join('')+'</tbody></table>':'<div class="no-data">Sin datos.</div>';}
   const sac=document.getElementById('stats-activity');
   if(sac){const days={};const now=new Date();for(let i=13;i>=0;i--){const d=new Date(now);d.setDate(d.getDate()-i);days[d.toLocaleDateString('es-CL')]={d:d.toLocaleDateString('es-CL'),g:0};}scores.forEach(s=>{const d=new Date(s.created_at).toLocaleDateString('es-CL');if(days[d])days[d].g++;});const darr=Object.values(days);const mx=Math.max(...darr.map(d=>d.g),1);sac.innerHTML='<div style="padding:14px 10px;display:flex;align-items:flex-end;gap:4px;height:110px;">'+darr.map(d=>{const h=Math.max(d.g/mx*72,d.g>0?4:2);return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;" title="'+d.d+': '+d.g+' partidas"><div style="font-size:0.5rem;color:var(--muted)">'+d.g+'</div><div style="height:'+h+'px;width:100%;background:'+(d.g>0?'var(--accent)':'var(--border)')+';border-radius:2px 2px 0 0;min-height:2px;"></div><div style="font-size:0.47rem;color:var(--muted);writing-mode:vertical-rl;transform:rotate(180deg);line-height:1">'+d.d.slice(0,5)+'</div></div>';}).join('')+'</div>';}
 }
 function sc(val,lbl,col){return '<div class="stat-card '+col+'"><div class="stat-card-val">'+val+'</div><div class="stat-card-lbl">'+lbl+'</div></div>';}
-function resizeImg(file,maxW,maxH,cb){const r=new FileReader();r.onload=e=>{const img=new Image();img.onload=()=>{let w=img.width,h=img.height;const ratio=Math.min(maxW/w,maxH/h,1);w=Math.round(w*ratio);h=Math.round(h*ratio);const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);cb(c.toDataURL('image/jpeg',0.84).split(',')[1]);};img.src=e.target.result;};r.readAsDataURL(file);}
 function shuffle(arr){for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}return arr;}
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 
+/* ── INIT ── */
+// First add photo_url columns if they don't exist - handled by SQL below
 loadMachines();
 loadPrizeText();
 </script>
