@@ -185,6 +185,12 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
 .photo-main-badge{position:absolute;bottom:2px;left:2px;background:var(--gold);color:#000;font-size:0.5rem;font-weight:800;padding:1px 4px;border-radius:3px;}
 .photo-set-main{position:absolute;top:-6px;left:-6px;background:var(--accent2);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:0.65rem;cursor:pointer;font-weight:800;}
 .upload-progress{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:10px 14px;font-size:0.8rem;color:var(--accent2);margin-top:8px;display:none;}
+
+.winner-row{padding:14px 16px;border-bottom:1px solid var(--border);font-size:0.82rem;}
+.winner-row:last-child{border-bottom:none;}
+.winner-row strong{color:var(--gold);}
+.winner-row .winner-prize{color:var(--green);font-weight:700;}
+.winner-row .winner-date{color:var(--muted);font-size:0.75rem;margin-top:3px;}
 </style>
 </head>
 <body>
@@ -235,6 +241,7 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
       <div class="qstat err"><div class="qstat-val" id="q-err">0</div><div class="qstat-lbl">Error</div></div>
       <div class="qstat pts"><div class="qstat-val" id="q-pts">0</div><div class="qstat-lbl">Puntos</div></div>
     </div>
+    <button class="quit-btn" onclick="restartQuiz()">&#8635; Reiniciar</button>
     <button class="quit-btn" onclick="goTo('setup')">&#10005; Salir</button>
   </div>
   <div class="prog-wrap">
@@ -288,12 +295,24 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
     <div class="lb-head">&#127942; Ranking global <button class="lb-clear" onclick="clearScores()">Borrar tabla</button></div>
     <div id="ranking-lb-body"><div class="loading">Cargando...</div></div>
   </div>
+  <div class="section-box" style="margin-top:18px;">
+    <div class="lb-head">&#127942; Historial de ganadores</div>
+    <div id="winners-history-body"><div class="loading">Cargando...</div></div>
+  </div>
 </div>
 <div id="view-admin" class="view">
   <div class="section-box">
-    <div class="section-head">&#127873; Texto del premio <button class="btn btn-primary btn-sm" onclick="savePrizeText()">Guardar</button></div>
-    <div style="padding:14px;">
-      <textarea id="prize-input" placeholder="Ej: El mejor puntaje del mes gana 1 hora libre..." style="width:100%;background:var(--surface);border:2px solid var(--border);color:var(--text);padding:10px 13px;border-radius:9px;font-size:0.88rem;outline:none;resize:vertical;min-height:65px;-webkit-user-select:text;user-select:text;"></textarea>
+    <div class="section-head">&#127873; Configurar premio y reset <button class="btn btn-primary btn-sm" onclick="saveResetConfig()">Guardar</button></div>
+    <div style="padding:14px;display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <label class="form-label">Premio (ej: 1 hora libre)</label>
+        <input class="modal-input" id="prize-input" placeholder="Ej: 1 hora libre" style="-webkit-user-select:text;user-select:text;" oninput="resetConfig.prize=this.value;updatePrizePreview();">
+      </div>
+      <div>
+        <label class="form-label">Fecha de reset (DD/MM/YYYY)</label>
+        <input class="modal-input" id="reset-date-input" placeholder="Ej: 30/05/2026" style="-webkit-user-select:text;user-select:text;" oninput="resetConfig.resetDate=this.value;updatePrizePreview();">
+      </div>
+      <div id="prize-preview" style="background:var(--surface);border-radius:9px;padding:10px 14px;font-size:0.82rem;color:var(--muted);"></div>
     </div>
   </div>
   <div class="admin-toolbar">
@@ -303,18 +322,24 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
     <span class="sync-badge sync-loading" id="sync-badge">...</span>
   </div>
   <div class="section-box">
-    <div class="section-head">&#127920; Modelos <span id="admin-count"></span></div>
-    <div id="admin-list"></div>
+    <div class="section-head" onclick="toggleModels()" style="cursor:pointer;">&#127920; Modelos <span id="admin-count"></span> <span id="models-toggle" style="float:right;color:var(--muted);font-size:0.8rem;">&#9650; ocultar</span></div>
+    <div id="admin-list-wrap"><div id="admin-list"></div></div>
   </div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <div style="font-size:0.9rem;font-weight:800;color:var(--accent2);">&#128200; Estad&#237;sticas</div>
     <button class="refresh-btn" onclick="loadStats()">&#8635; Actualizar</button>
   </div>
   <div class="stats-grid" id="stats-global"></div>
-  <div class="section-box"><div class="section-head">&#128100; Jugadores</div><div id="stats-players"><div class="loading">Cargando...</div></div></div>
-  <div class="section-box"><div class="section-head">&#127919; Tasa de acierto por m&#225;quina</div><div id="stats-machines-acc"><div class="loading">Cargando...</div></div></div>
-  <div class="section-box"><div class="section-head">&#9201; Velocidad promedio</div><div id="stats-speed"><div class="loading">Cargando...</div></div></div>
-  <div class="section-box"><div class="section-head">&#128197; Actividad &#250;ltimos 14 d&#237;as</div><div id="stats-activity"><div class="loading">Cargando...</div></div></div>
+  <div class="section-box"><div class="section-head" onclick="toggleSection('stats-players-wrap','toggle-players')" style="cursor:pointer;">&#128100; Jugadores <span id="toggle-players" style="float:right;color:var(--muted);font-size:0.8rem;">&#9660; mostrar</span></div><div id="stats-players-wrap" style="display:none"><div id="stats-players"><div class="loading">Cargando...</div></div></div></div>
+  <div class="section-box"><div class="section-head" onclick="toggleSection('stats-machines-wrap','toggle-machines')" style="cursor:pointer;">&#127919; Tasa de acierto por m&#225;quina <span id="toggle-machines" style="float:right;color:var(--muted);font-size:0.8rem;">&#9660; mostrar</span></div><div id="stats-machines-wrap" style="display:none"><div id="stats-machines-acc"><div class="loading">Cargando...</div></div></div></div>
+  <div class="section-box"><div class="section-head" onclick="toggleSection('stats-speed-wrap','toggle-speed')" style="cursor:pointer;">&#9201; Velocidad promedio <span id="toggle-speed" style="float:right;color:var(--muted);font-size:0.8rem;">&#9660; mostrar</span></div><div id="stats-speed-wrap" style="display:none"><div id="stats-speed"><div class="loading">Cargando...</div></div></div></div>
+  <div class="section-box"><div class="section-head" onclick="toggleSection('stats-activity-wrap','toggle-activity')" style="cursor:pointer;">&#128197; Actividad &#250;ltimos 14 d&#237;as <span id="toggle-activity" style="float:right;color:var(--muted);font-size:0.8rem;">&#9660; mostrar</span></div><div id="stats-activity-wrap" style="display:none"><div id="stats-activity"><div class="loading">Cargando...</div></div></div></div>
+</div>
+
+<div id="countdown-overlay" style="display:none;position:fixed;inset:0;z-index:998;background:rgba(10,10,18,0.97);flex-direction:column;align-items:center;justify-content:center;gap:20px;">
+  <div id="cd-status" style="font-size:0.9rem;font-weight:700;color:#64748b;">Cargando...</div>
+  <div id="cd-num" style="font-size:6rem;font-weight:900;color:#06b6d4;line-height:1;"></div>
+  <div style="background:#2d2d4e;border-radius:4px;height:6px;width:220px;overflow:hidden;"><div id="cd-bar" style="height:100%;background:linear-gradient(90deg,#7c3aed,#06b6d4);border-radius:4px;width:0%;transition:width 0.15s linear;"></div></div>
 </div>
 <div id="lightbox" onclick="closeLb()">
   <div class="lb-box" onclick="event.stopPropagation()">
@@ -405,7 +430,7 @@ function goTo(v){
   document.getElementById('view-'+v).classList.add('active');
   document.querySelectorAll('.nav-tab').forEach((t,i)=>t.classList.toggle('active',
     (v==='catalog'&&i===0)||((v==='setup'||v==='quiz'||v==='results')&&i===1)||(v==='ranking'&&i===2)||(v==='admin'&&i===3)));
-  if(v==='ranking'){loadRanking();loadPrizeText();}
+  if(v==='ranking'){loadRanking();loadResetConfig();}
   if(v==='setup'){
     const pw=MACHINES.filter(m=>m.photo_url).length;
     const w=document.getElementById('no-img-warn');if(w)w.style.display=pw<4?'block':'none';
@@ -482,6 +507,32 @@ function calcPts(ms){
   return Math.round((10 + speedBonus) * vipMult());
 }
 
+
+async function saveIncompleteGame(){
+  if(!playerName || qNum===0) return;
+  const acc = qTotal>0 ? Math.round(qCorrect/qTotal*100) : 0;
+  try{
+    await sbPost('/rest/v1/scores',{
+      name:playerName, pts:qScore, correct:qCorrect,
+      total:qNum, timer_sec:cfg.t, accuracy:acc, completed:false
+    });
+  }catch(e){console.error('saveIncomplete failed',e);}
+}
+async function restartQuiz(){
+  // Save current game as incomplete if it was started
+  if(qNum>0){ await saveIncompleteGame(); }
+  const pl=MACHINES.filter(m=>m.photo_url);
+  if(pl.length<4) return;
+  const cnt=cfg.q>=999?pl.length:Math.min(cfg.q,pl.length);
+  qQueue=shuffle(pl.map((_,i)=>i)).slice(0,cnt);
+  qTotal=qQueue.length;qNum=0;qCorrect=0;qWrong=0;qScore=0;lastScore=0;
+  clearTimers();
+  document.getElementById('q-ok').textContent=0;
+  document.getElementById('q-err').textContent=0;
+  document.getElementById('q-pts').textContent=0;
+  nextQ();
+}
+
 function startQuiz(){
   playerName=document.getElementById('player-name').value.trim();
   if(!playerName){
@@ -496,7 +547,75 @@ function startQuiz(){
   const cnt=cfg.q>=999?pl.length:Math.min(cfg.q,pl.length);
   qQueue=shuffle(pl.map((_,i)=>i)).slice(0,cnt);
   qTotal=qQueue.length;qNum=0;qCorrect=0;qWrong=0;qScore=0;lastScore=0;
-  goTo('quiz');nextQ();
+  // Preload images then countdown
+  preloadAndCountdown(pl);
+}
+
+// Cache of preloaded image objects
+const imgCache = {};
+
+async function preloadAndCountdown(pl){
+  const overlay = document.getElementById('countdown-overlay');
+  const cdStatus = document.getElementById('cd-status');
+  const cdNum = document.getElementById('cd-num');
+  const cdBar = document.getElementById('cd-bar');
+  overlay.style.display = 'flex';
+
+  const toLoad = qQueue.map(i => pl[i]).filter(m => m.photo_url);
+  const failed = new Set();
+  let loaded = 0;
+
+  cdStatus.textContent = 'Cargando imágenes... 0/' + toLoad.length;
+  cdBar.style.width = '0%';
+
+  await Promise.all(toLoad.map(m => new Promise(resolve => {
+    // Already cached — skip
+    if(imgCache[m.photo_url] && imgCache[m.photo_url] !== 'error'){
+      loaded++;
+      cdStatus.textContent = 'Cargando imágenes... ' + loaded + '/' + toLoad.length;
+      cdBar.style.width = (loaded / toLoad.length * 60) + '%';
+      resolve(); return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      imgCache[m.photo_url] = img;
+      loaded++;
+      cdStatus.textContent = 'Cargando imágenes... ' + loaded + '/' + toLoad.length;
+      cdBar.style.width = (loaded / toLoad.length * 60) + '%';
+      resolve();
+    };
+    img.onerror = () => {
+      // Mark as failed — will be skipped in quiz
+      imgCache[m.photo_url] = 'error';
+      failed.add(m.photo_url);
+      loaded++;
+      cdStatus.textContent = 'Cargando imágenes... ' + loaded + '/' + toLoad.length;
+      cdBar.style.width = (loaded / toLoad.length * 60) + '%';
+      resolve();
+    };
+    img.src = m.photo_url;
+  })));
+
+  // Remove failed images from queue
+  if(failed.size > 0){
+    const before = qQueue.length;
+    const validPl = pl.filter(m => imgCache[m.photo_url] && imgCache[m.photo_url] !== 'error');
+    qQueue = shuffle(validPl.map((_,i)=>i)).slice(0, qTotal);
+    qTotal = qQueue.length;
+    if(qTotal < 4){ overlay.style.display='none'; alert('No hay suficientes imágenes disponibles. Verifica tu conexión.'); return; }
+  }
+
+  // Countdown 3-2-1
+  cdStatus.textContent = '¡Prepárate!';
+  for(let i=3; i>=1; i--){
+    cdNum.textContent = i;
+    cdBar.style.width = (60 + (3-i+1)/3*40) + '%';
+    await new Promise(r => setTimeout(r, 900));
+  }
+  cdNum.textContent = '';
+  overlay.style.display = 'none';
+  goTo('quiz');
+  nextQ();
 }
 function nextQ(){
   if(qNum>=qTotal){endQuiz();return;}
@@ -510,8 +629,14 @@ function nextQ(){
   document.getElementById('prog-lbl').textContent=qNum+'/'+qTotal;
   document.getElementById('prog-bar').style.width=((qNum-1)/qTotal*100)+'%';
   const img=document.getElementById('quiz-img');
-  img.style.opacity='0.3';
-  setTimeout(()=>{img.src=getImgUrl(m.photo_url);img.style.opacity='1';},80);
+  const cached = imgCache[m.photo_url];
+  if(cached && cached !== 'error' && cached.complete){
+    img.src = cached.src;
+    img.style.opacity='1';
+  } else {
+    img.style.opacity='0.3';
+    setTimeout(()=>{img.src=getImgUrl(m.photo_url);img.style.opacity='1';},80);
+  }
   const cn=m.name;
   const pool=shuffle(pl.filter((x,i)=>i!==qQueue[qNum-1]&&x.name!==cn));
   const allOpts=shuffle([m,...pool.slice(0,3)]);
@@ -581,7 +706,7 @@ async function endQuiz(){
 }
 
 /* ── SCORES ── */
-async function saveScore(name,pts,correct,total,sec,accuracy){try{await sbPost('/rest/v1/scores',{name,pts,correct,total,timer_sec:sec,accuracy});}catch(e){}}
+async function saveScore(name,pts,correct,total,sec,accuracy){try{await sbPost('/rest/v1/scores',{name,pts,correct,total,timer_sec:sec,accuracy,completed:true});}catch(e){}}
 async function recordAnswer(mn,correct,timeMs,pts){try{await sbPost('/rest/v1/quiz_answers',{player_name:playerName,machine_name:mn,correct,time_ms:timeMs,pts,timer_sec:cfg.t});}catch(e){}}
 function getClaveHora(){const n=new Date();return String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0');}
 
@@ -599,7 +724,7 @@ async function renderLeaderboard(){
   const body=document.getElementById('lb-body');if(!body)return;
   body.innerHTML='<div class="loading">Cargando...</div>';
   try{
-    const s=await sbGet('/rest/v1/scores?order=pts.desc&limit=500');
+    const s=(await sbGet('/rest/v1/scores?order=pts.desc&limit=500')).filter(x=>x.completed!==false);
     if(!s.length){body.innerHTML='<div class="no-data">Sin puntajes.</div>';return;}
     // Group by name, keep best score
     const best={};
@@ -617,7 +742,7 @@ async function loadRanking(){
   const body=document.getElementById('ranking-lb-body');if(!body)return;
   body.innerHTML='<div class="loading">Cargando...</div>';
   try{
-    const r=await sbFetch('/rest/v1/scores?order=pts.desc&limit=500');
+    const r=await sbFetch('/rest/v1/scores?completed=eq.true&order=pts.desc&limit=500');
     if(!r.ok){const e=await r.text();body.innerHTML='<div class="no-data">Error '+r.status+': '+e+'</div>';return;}
     const s=await r.json();
     if(!s.length){body.innerHTML='<div class="no-data">Sin puntajes aun!</div>';return;}
@@ -634,24 +759,154 @@ async function loadRanking(){
 }
 
 /* ── PRIZE ── */
-async function loadPrizeText(){
-  try{const r=await sbGet('/rest/v1/announcements?id=eq.1');const t=r[0]?.text||'';renderPrizeBanner(t);const pi=document.getElementById('prize-input');if(pi)pi.value=t;}catch(e){}
+/* ── RESET CONFIG ── */
+let resetConfig = {prize:'', resetDate:''};
+
+async function loadResetConfig(){
+  try{
+    const rows = await sbGet('/rest/v1/settings?key=in.(reset_date,reset_label,prize)');
+    rows.forEach(r=>{
+      if(r.key==='prize') resetConfig.prize = r.value||'';
+      if(r.key==='reset_date') resetConfig.resetDate = r.value||'';
+    });
+    updatePrizePreview();
+    renderPrizeBanner();
+    // Populate admin inputs
+    const pi=document.getElementById('prize-input'); if(pi) pi.value=resetConfig.prize;
+    const rd=document.getElementById('reset-date-input'); if(rd) rd.value=resetConfig.resetDate;
+    // Check if reset should trigger
+    checkAutoReset();
+  }catch(e){console.error('loadResetConfig failed',e);}
 }
-function renderPrizeBanner(text){
+
+function updatePrizePreview(){
+  const prev = document.getElementById('prize-preview');
+  if(!prev) return;
+  if(resetConfig.prize && resetConfig.resetDate){
+    prev.innerHTML = '&#128161; Se mostrar&#225; en Ranking: <strong style="color:var(--accent2)">"El mejor puntaje antes del '+resetConfig.resetDate+' a las 23:59 ganar&#225; '+resetConfig.prize+'"</strong>';
+  } else {
+    prev.textContent = 'Completa el premio y la fecha para ver la vista previa.';
+  }
+}
+
+function renderPrizeBanner(){
   const w=document.getElementById('prize-banner-wrap');if(!w)return;
-  w.innerHTML=text&&text.trim()?'<div class="prize-banner"><div class="prize-icon">&#127873;</div><div class="prize-text">'+text.replace(/\n/g,'<br>')+'</div></div>':'';
+  if(resetConfig.prize && resetConfig.resetDate){
+    const msg = 'El mejor puntaje antes del '+resetConfig.resetDate+' a las 23:59 ganar&#225; '+resetConfig.prize;
+    w.innerHTML='<div class="prize-banner"><div class="prize-icon">&#127873;</div><div class="prize-text">'+msg+'</div></div>';
+  } else if(resetConfig.prize){
+    w.innerHTML='<div class="prize-banner"><div class="prize-icon">&#127873;</div><div class="prize-text">Premio: '+resetConfig.prize+'</div></div>';
+  } else {
+    w.innerHTML='';
+  }
 }
-async function savePrizeText(){
-  const text=document.getElementById('prize-input')?.value.trim()||'';
-  try{await sbFetch('/rest/v1/announcements',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({id:1,text})});renderPrizeBanner(text);alert('Guardado.');}
-  catch(e){alert('Error al guardar.');}
+
+async function saveResetConfig(){
+  const prize = document.getElementById('prize-input')?.value.trim()||'';
+  const resetDate = document.getElementById('reset-date-input')?.value.trim()||'';
+  resetConfig.prize = prize;
+  resetConfig.resetDate = resetDate;
+  try{
+    await Promise.all([
+      sbFetch('/rest/v1/settings',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:'prize',value:prize})}),
+      sbFetch('/rest/v1/settings',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:'reset_date',value:resetDate})})
+    ]);
+    updatePrizePreview();
+    renderPrizeBanner();
+    alert('Guardado.');
+  }catch(e){alert('Error: '+e.message);}
+}
+
+async function checkAutoReset(){
+  if(!resetConfig.resetDate) return;
+  // Parse DD/MM/YYYY
+  const parts = resetConfig.resetDate.split('/');
+  if(parts.length!==3) return;
+  const resetMoment = new Date(parts[2], parts[1]-1, parts[0], 23, 59, 59);
+  const now = new Date();
+  if(now >= resetMoment){
+    // Check if already reset for this date (avoid double reset)
+    const lastReset = localStorage.getItem('mda_last_reset');
+    if(lastReset === resetConfig.resetDate) return;
+    // Execute reset
+    await executeAutoReset();
+  }
+}
+
+async function executeAutoReset(){
+  try{
+    // Get current top scores
+    const scores = await sbGet('/rest/v1/scores?order=pts.desc&limit=500');
+    if(!scores.length){localStorage.setItem('mda_last_reset', resetConfig.resetDate);return;}
+    
+    // Group by player, keep best
+    const best={};
+    scores.forEach(x=>{if(!best[x.name]||x.pts>best[x.name].pts)best[x.name]=x;});
+    const top = Object.values(best).sort((a,b)=>b.pts-a.pts);
+    // obrist is excluded from winning (appears in ranking but not eligible for prize)
+    const EXCLUDED = ['obrist'];
+    const winner = top.find(x=>!EXCLUDED.includes(x.name.toLowerCase().trim()));
+    if(!winner){localStorage.setItem('mda_last_reset', resetConfig.resetDate);return;}
+    const historyRows = top.slice(0,10).map((s,i)=>({
+      period_label: 'Hasta el '+resetConfig.resetDate,
+      reset_date: resetConfig.resetDate,
+      rank: i+1,
+      player_name: s.name,
+      pts: s.pts,
+      accuracy: s.accuracy||0,
+      timer_sec: s.timer_sec||5,
+      prize: i===0 ? resetConfig.prize : null
+    }));
+    
+    await sbPost('/rest/v1/winners_history', historyRows);
+    
+    // Clear scores and quiz_answers
+    await Promise.all([
+      sbDelete('/rest/v1/scores?id=gt.0'),
+      sbDelete('/rest/v1/quiz_answers?id=gt.0')
+    ]);
+    
+    // Mark as done
+    localStorage.setItem('mda_last_reset', resetConfig.resetDate);
+    
+    // Clear reset date in settings so it doesn't repeat
+    await sbFetch('/rest/v1/settings',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:'reset_date',value:''})});
+    resetConfig.resetDate='';
+    
+    console.log('Auto reset executed. Winner:', winner.name, winner.pts);
+  }catch(e){console.error('Auto reset failed:',e);}
+}
+
+async function loadWinnersHistory(){
+  const body = document.getElementById('winners-history-body');
+  if(!body) return;
+  try{
+    const rows = await sbGet('/rest/v1/winners_history?order=id.desc&limit=100');
+    if(!rows.length){body.innerHTML='<div class="no-data">Sin historial aún.</div>';return;}
+    
+    // Group by reset_date
+    const periods={};
+    rows.forEach(r=>{
+      if(!periods[r.reset_date]) periods[r.reset_date]={date:r.reset_date,label:r.period_label,entries:[]};
+      periods[r.reset_date].entries.push(r);
+    });
+    
+    body.innerHTML = Object.values(periods).map(p=>{
+      const winner = p.entries.find(e=>e.rank===1);
+      const prize = winner?.prize||'';
+      const header = '<div style="padding:10px 16px;background:var(--surface);font-size:0.78rem;font-weight:800;color:var(--accent2);border-bottom:1px solid var(--border);">'+p.label+'</div>';
+      const winnerHtml = winner ? '<div class="winner-row">&#127942; El d&#237;a <strong>'+p.date+'</strong>, <strong style="color:var(--accent2)">'+winner.player_name+'</strong> obtuvo <strong>'+winner.pts+' pts</strong>'+(prize?' y gan&#243; <span class="winner-prize">'+prize+'</span>':'')+'<div class="winner-date">Precisi&#243;n: '+winner.accuracy+'%</div></div>' : '';
+      const rest = p.entries.filter(e=>e.rank>1).map(e=>'<div class="winner-row" style="opacity:0.7;">'+e.rank+'. '+e.player_name+' — '+e.pts+' pts</div>').join('');
+      return '<div class="section-box" style="margin-bottom:12px;">'+header+winnerHtml+rest+'</div>';
+    }).join('');
+  }catch(e){body.innerHTML='<div class="no-data">Error: '+e.message+'</div>';}
 }
 
 /* ── ADMIN ── */
 async function adminLogin(){
-  if(adminUnlocked){goTo('admin');renderAdmin();loadStats();loadPrizeText();return;}
+  if(adminUnlocked){goTo('admin');renderAdmin();loadStats();loadResetConfig();return;}
   const input=prompt('Clave:');if(!input)return;
-  if(input.trim()===getClaveHora()){adminUnlocked=true;goTo('admin');renderAdmin();loadStats();loadPrizeText();}
+  if(input.trim()===getClaveHora()){adminUnlocked=true;goTo('admin');renderAdmin();loadStats();loadResetConfig();}
   else alert('Clave incorrecta.');
 }
 function renderAdmin(){
@@ -821,11 +1076,42 @@ function resetPhotos(){
 /* ── STATS ── */
 async function loadStats(){
   ['stats-global','stats-players','stats-machines-acc','stats-speed','stats-activity'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='<div class="loading">Cargando...</div>';});
-  const [scores,answers]=await Promise.all([sbGet('/rest/v1/scores?order=pts.desc&limit=1000'),sbGet('/rest/v1/quiz_answers?order=created_at.desc&limit=5000')]);
+  const [allScores,answers]=await Promise.all([
+    sbGet('/rest/v1/scores?order=pts.desc&limit=1000'),
+    sbGet('/rest/v1/quiz_answers?order=created_at.desc&limit=5000')
+  ]);
+  const scores = allScores.filter(s=>s.completed!==false); // valid games only
+  const incomplete = allScores.filter(s=>s.completed===false);
   const sg=document.getElementById('stats-global');
-  if(sg){const tg=scores.length,ta=answers.length,tok=answers.filter(a=>a.correct).length,ga=ta?Math.round(tok/ta*100):0,best=scores.length?Math.max(...scores.map(s=>s.pts)):0,pl=[...new Set(scores.map(s=>s.name))].length;sg.innerHTML=sc(tg,'Partidas','purple')+sc(pl,'Jugadores','blue')+sc(ga+'%','Precision global','green')+sc(best,'Mejor puntaje','gold');}
+  if(sg){const tg=scores.length,ti=incomplete.length,ta=answers.length,tok=answers.filter(a=>a.correct).length,ga=ta?Math.round(tok/ta*100):0,best=scores.length?Math.max(...scores.map(s=>s.pts)):0,pl=[...new Set(scores.map(s=>s.name))].length;sg.innerHTML=sc(tg,'Partidas completas','purple')+sc(ti,'Incompletas','red')+sc(pl,'Jugadores','blue')+sc(ga+'%','Precision global','green')+sc(best,'Mejor puntaje','gold');}
   const sp=document.getElementById('stats-players');
-  if(sp){const pm={};scores.forEach(s=>{if(!pm[s.name])pm[s.name]={name:s.name,games:0,best:0,accSum:0,last10:[]};const p=pm[s.name];p.games++;if(s.pts>p.best)p.best=s.pts;p.accSum+=s.accuracy||0;p.last10.unshift(s);});const pa=Object.values(pm).sort((a,b)=>b.best-a.best);sp.innerHTML=pa.length?'<table><thead><tr><th>#</th><th>Jugador</th><th>Partidas</th><th>Mejor</th><th>Prec.prom.</th><th>Ultimos 10</th></tr></thead><tbody>'+pa.map((p,i)=>{const avg=Math.round(p.accSum/p.games);const last=p.last10.slice(0,10).map(s=>'<span class="pill '+(s.accuracy>=70?'g':s.accuracy>=40?'y':'r')+'" title="'+new Date(s.created_at).toLocaleDateString('es-CL')+'">'+s.pts+'</span>').join(' ');return '<tr><td>'+(i+1)+'</td><td><strong>'+p.name+'</strong></td><td>'+p.games+'</td><td style="color:var(--gold);font-weight:800">'+p.best+'</td><td>'+avg+'%<div class="acc-bar"><div class="acc-fill" style="width:'+avg+'%;background:'+(avg>=70?'var(--green)':avg>=40?'var(--gold)':'var(--red)')+'"></div></div></td><td>'+last+'</td></tr>';}).join('')+'</tbody></table>':'<div class="no-data">Sin datos.</div>';}
+  if(sp){
+    const pm={};
+    allScores.forEach(s=>{
+      if(!pm[s.name])pm[s.name]={name:s.name,complete:0,incomplete:0,best:0,accSum:0,last10:[]};
+      const p=pm[s.name];
+      if(s.completed===false){p.incomplete++;}
+      else{p.complete++;if(s.pts>p.best)p.best=s.pts;p.accSum+=s.accuracy||0;p.last10.push(s);}
+    });
+    const pa=Object.values(pm).sort((a,b)=>b.best-a.best);
+    if(!pa.length){sp.innerHTML='<div class="no-data">Sin datos.</div>';}
+    else{
+      sp.innerHTML='<table><thead><tr><th>#</th><th>Jugador</th>'+
+        '<th style="color:var(--green)">Completas</th>'+
+        '<th style="color:var(--red)">Incompletas</th>'+
+        '<th>Mejor</th><th>Prec.prom.</th><th>Ultimos 10</th></tr></thead><tbody>'+
+        pa.map((p,i)=>{
+          const avg=p.complete>0?Math.round(p.accSum/p.complete):0;
+          const last=p.last10.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,10).map(s=>'<span class="pill '+(s.accuracy>=70?'g':s.accuracy>=40?'y':'r')+'" title="'+new Date(s.created_at).toLocaleDateString('es-CL')+'">'+s.pts+'</span>').join(' ');
+          return '<tr><td>'+(i+1)+'</td><td><strong>'+p.name+'</strong></td>'+
+            '<td style="color:var(--green);font-weight:700">'+p.complete+'</td>'+
+            '<td style="color:var(--red);opacity:0.8">'+p.incomplete+'</td>'+
+            '<td style="color:var(--gold);font-weight:800">'+p.best+'</td>'+
+            '<td>'+avg+'%<div class="acc-bar"><div class="acc-fill" style="width:'+avg+'%;background:'+(avg>=70?'var(--green)':avg>=40?'var(--gold)':'var(--red)')+'"></div></div></td>'+
+            '<td>'+last+'</td></tr>';
+        }).join('')+'</tbody></table>';
+    }
+  }
   const sm=document.getElementById('stats-machines-acc');
   if(sm){const ma={};answers.forEach(a=>{if(!ma[a.machine_name])ma[a.machine_name]={name:a.machine_name,ok:0,total:0};ma[a.machine_name].total++;if(a.correct)ma[a.machine_name].ok++;});const marr=Object.values(ma).sort((a,b)=>(a.ok/a.total)-(b.ok/b.total));sm.innerHTML=marr.length?'<table><thead><tr><th>Modelo</th><th>Veces</th><th>Aciertos</th><th>Errores</th><th>Tasa</th></tr></thead><tbody>'+marr.map(m=>{const acc=Math.round(m.ok/m.total*100);const col=acc>=70?'var(--green)':acc>=40?'var(--gold)':'var(--red)';return '<tr><td><strong>'+m.name+'</strong></td><td>'+m.total+'</td><td style="color:var(--green)">'+m.ok+'</td><td style="color:var(--red)">'+(m.total-m.ok)+'</td><td>'+acc+'%<div class="acc-bar"><div class="acc-fill" style="width:'+acc+'%;background:'+col+'"></div></div></td></tr>';}).join('')+'</tbody></table>':'<div class="no-data">Sin datos.</div>';}
   const ss=document.getElementById('stats-speed');
@@ -840,8 +1126,36 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 
 /* ── INIT ── */
 // First add photo_url columns if they don't exist - handled by SQL below
+
+
+function toggleSection(wrapId, btnId){
+  const wrap = document.getElementById(wrapId);
+  const btn = document.getElementById(btnId);
+  if(!wrap||!btn) return;
+  if(wrap.style.display==='none'){
+    wrap.style.display='';
+    btn.innerHTML='&#9650; ocultar';
+  } else {
+    wrap.style.display='none';
+    btn.innerHTML='&#9660; mostrar';
+  }
+}
+function toggleModels(){
+  const wrap = document.getElementById('admin-list-wrap');
+  const btn = document.getElementById('models-toggle');
+  const toolbar = document.querySelector('.admin-toolbar');
+  if(wrap.style.display==='none'){
+    wrap.style.display='';
+    toolbar.style.display='';
+    btn.innerHTML='&#9650; ocultar';
+  } else {
+    wrap.style.display='none';
+    toolbar.style.display='none';
+    btn.innerHTML='&#9660; mostrar';
+  }
+}
 loadMachines();
-loadPrizeText();
+loadResetConfig();
 </script>
 </body>
 </html>
