@@ -191,6 +191,7 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
 .winner-row strong{color:var(--gold);}
 .winner-row .winner-prize{color:var(--green);font-weight:700;}
 .winner-row .winner-date{color:var(--muted);font-size:0.75rem;margin-top:3px;}
+.player-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;background:var(--surface);transition:background 0.15s;}.player-header:hover{background:rgba(124,58,237,0.08);}
 </style>
 </head>
 <body>
@@ -325,6 +326,22 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
     <div class="section-head" onclick="toggleModels()" style="cursor:pointer;">&#127920; Modelos <span id="admin-count"></span> <span id="models-toggle" style="float:right;color:var(--muted);font-size:0.8rem;">&#9650; ocultar</span></div>
     <div id="admin-list-wrap" style="display:none"><div id="admin-list"></div></div>
   </div>
+  
+  <!-- SCORES MANAGEMENT -->
+  <div class="section-box" style="margin-bottom:18px;">
+    <div class="section-head" onclick="toggleSection('scores-mgmt-wrap','toggle-scores-mgmt'); if(document.getElementById('scores-mgmt-wrap').style.display!=='none') loadScoresMgmt();" style="cursor:pointer;">
+      &#127942; Gestionar puntajes
+      <span id="toggle-scores-mgmt" style="float:right;color:var(--muted);font-size:0.8rem;">&#9660; mostrar</span>
+    </div>
+    <div id="scores-mgmt-wrap" style="display:none">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input id="scores-search" class="admin-search" style="max-width:200px;" placeholder="Buscar jugador..." oninput="renderScoresMgmt()">
+        <button class="btn btn-secondary btn-sm" onclick="loadScoresMgmt()">&#8635; Actualizar</button>
+      </div>
+      <div id="scores-mgmt-list"><div class="loading">Cargando...</div></div>
+    </div>
+  </div>
+
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <div style="font-size:0.9rem;font-weight:800;color:var(--accent2);">&#128200; Estad&#237;sticas</div>
     <button class="refresh-btn" onclick="loadStats()">&#8635; Actualizar</button>
@@ -340,6 +357,17 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
   <div id="cd-status" style="font-size:0.9rem;font-weight:700;color:#64748b;">Cargando...</div>
   <div id="cd-num" style="font-size:6rem;font-weight:900;color:#06b6d4;line-height:1;"></div>
   <div style="background:#2d2d4e;border-radius:4px;height:6px;width:220px;overflow:hidden;"><div id="cd-bar" style="height:100%;background:linear-gradient(90deg,#7c3aed,#06b6d4);border-radius:4px;width:0%;transition:width 0.15s linear;"></div></div>
+</div>
+
+<div id="modal-score" class="modal">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-title" id="modal-score-title">Editar puntaje</div>
+    <div class="modal-group"><label class="modal-label">Nombre</label><input class="modal-input" id="score-name" placeholder="Nombre del jugador"></div>
+    <div class="modal-group"><label class="modal-label">Puntaje</label><input class="modal-input" id="score-pts" type="number" min="0" max="9999"></div>
+    <div class="modal-group"><label class="modal-label">Precisi&#243;n (%)</label><input class="modal-input" id="score-acc" type="number" min="0" max="100"></div>
+    <div class="modal-group"><label class="modal-label">Segundos</label><input class="modal-input" id="score-sec" type="number" min="5" max="15"></div>
+    <div class="modal-btns"><button class="btn btn-primary" onclick="saveScore_mgmt()">Guardar</button><button class="btn btn-secondary" onclick="closeModal('modal-score')">Cancelar</button></div>
+  </div>
 </div>
 <div id="lightbox" onclick="closeLb()">
   <div class="lb-box" onclick="event.stopPropagation()">
@@ -1167,6 +1195,119 @@ function toggleModels(){
     btn.innerHTML='&#9660; mostrar';
   }
 }
+
+/* ── SCORES MANAGEMENT ── */
+let allScoresMgmt = [];
+let editingScoreId = null;
+
+async function loadScoresMgmt(){
+  const list = document.getElementById('scores-mgmt-list');
+  if(!list) return;
+  list.innerHTML = '<div class="loading">Cargando...</div>';
+  try{
+    allScoresMgmt = await sbGet('/rest/v1/scores?order=pts.desc&limit=500');
+    renderScoresMgmt();
+  }catch(e){ list.innerHTML = '<div class="no-data">Error: '+e.message+'</div>'; }
+}
+
+function renderScoresMgmt(){
+  const list=document.getElementById('scores-mgmt-list');
+  if(!list)return;
+  const q=(document.getElementById('scores-search')?.value||'').toLowerCase();
+  const filtered=allScoresMgmt.filter(s=>s.name.toLowerCase().includes(q));
+  if(!filtered.length){list.innerHTML='<div class="no-data">Sin resultados.</div>';return;}
+  const grouped={};
+  filtered.forEach(s=>{
+    if(!grouped[s.name])grouped[s.name]={name:s.name,scores:[]};
+    grouped[s.name].scores.push(s);
+  });
+  const sorted=Object.values(grouped).sort((a,b)=>Math.max(...b.scores.map(s=>s.pts))-Math.max(...a.scores.map(s=>s.pts)));
+  let out='';
+  sorted.forEach((g,gi)=>{
+    const best=Math.max(...g.scores.map(s=>s.pts));
+    const complete=g.scores.filter(s=>s.completed!==false).length;
+    const incomplete=g.scores.filter(s=>s.completed===false).length;
+    let rows='';
+    g.scores.forEach(s=>{
+      const f=new Date(s.created_at).toLocaleDateString('es-CL');
+      const h=new Date(s.created_at).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
+      const estado=s.completed===false?'<span style="color:var(--red);font-size:0.68rem;">incompleta</span>':'<span style="color:var(--green);font-size:0.68rem;">completa</span>';
+      rows+='<tr>'+
+        '<td style="padding-left:20px;color:var(--gold);font-weight:800;">'+s.pts+'</td>'+
+        '<td>'+(s.accuracy||0)+'%</td>'+
+        '<td>'+(s.timer_sec||'?')+'s</td>'+
+        '<td>'+estado+'</td>'+
+        '<td style="color:var(--muted);font-size:0.72rem;">'+f+' '+h+'</td>'+
+        '<td><div style="display:flex;gap:4px;">'+
+          '<button class="btn btn-secondary btn-sm" onclick="openEditScore('+s.id+')">&#9998;</button>'+
+          '<button class="btn btn-danger btn-sm" onclick="deleteScore('+s.id+')">&#128465;</button>'+
+        '</div></td></tr>';
+    });
+    out+='<div style="border-bottom:1px solid var(--border);">'+
+      '<div class="player-header" onclick="togglePlayerScores('+gi+')">'+
+        '<div style="display:flex;align-items:center;gap:12px;">'+
+          '<span style="font-weight:800;font-size:0.88rem;">'+g.name+'</span>'+
+          '<span style="color:var(--gold);font-size:0.8rem;font-weight:700;">'+best+' pts</span>'+
+          '<span style="color:var(--green);font-size:0.72rem;">'+complete+' OK</span>'+
+          (incomplete>0?'<span style="color:var(--red);font-size:0.72rem;">'+incomplete+' inc.</span>':'')+
+        '</div>'+
+        '<span id="toggle-player-'+gi+'" style="color:var(--muted);font-size:0.75rem;">&#9660;</span>'+
+      '</div>'+
+      '<div id="player-scores-'+gi+'" style="display:none;">'+
+        '<table style="width:100%"><thead><tr>'+
+          '<th>Puntaje</th><th>Prec.</th><th>Seg.</th><th>Estado</th><th>Fecha</th><th></th>'+
+        '</tr></thead><tbody>'+rows+'</tbody></table>'+
+      '</div>'+
+    '</div>';
+  });
+  list.innerHTML=out;
+}
+
+function togglePlayerScores(gi){
+  const wrap=document.getElementById('player-scores-'+gi);
+  const btn=document.getElementById('toggle-player-'+gi);
+  if(!wrap||!btn)return;
+  if(wrap.style.display==='none'){wrap.style.display='';btn.innerHTML='&#9650;';}
+  else{wrap.style.display='none';btn.innerHTML='&#9660;';}
+}
+
+
+
+function openEditScore(id){
+  const s = allScoresMgmt.find(x=>x.id===id);
+  if(!s) return;
+  editingScoreId = id;
+  const mt=document.getElementById('modal-score-title');if(mt)mt.textContent='Editar: '+s.name;
+  document.getElementById('score-name').value = s.name;
+  document.getElementById('score-pts').value = s.pts;
+  document.getElementById('score-acc').value = s.accuracy||0;
+  document.getElementById('score-sec').value = s.timer_sec||5;
+  openModal('modal-score');
+}
+
+async function saveScore_mgmt(){
+  const name = document.getElementById('score-name')?.value.trim();
+  const pts = parseInt(document.getElementById('score-pts')?.value)||0;
+  const accuracy = parseInt(document.getElementById('score-acc')?.value)||0;
+  const timer_sec = parseInt(document.getElementById('score-sec')?.value)||5;
+  if(!name || editingScoreId===null) return;
+  try{
+    const r=await sbPatch('/rest/v1/scores?id=eq.'+editingScoreId,{name,pts,accuracy,timer_sec});
+    if(!r.ok){const e=await r.text();alert('Error '+r.status+': '+e);return;}
+    closeModal('modal-score');
+    await loadScoresMgmt();
+  }catch(e){alert('Error: '+e.message);}
+}
+
+async function deleteScore(id){
+  const s = allScoresMgmt.find(x=>x.id===id);
+  if(!confirm('Eliminar puntaje de "'+s?.name+'" ('+s?.pts+' pts)?')) return;
+  try{
+    await sbDelete('/rest/v1/scores?id=eq.'+id);
+    await loadScoresMgmt();
+  }catch(e){ alert('Error: '+e.message); }
+}
+
 loadMachines();
 loadResetConfig();
 </script>
