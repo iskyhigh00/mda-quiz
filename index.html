@@ -315,7 +315,7 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
       <div id="prize-preview" style="background:var(--surface);border-radius:9px;padding:10px 14px;font-size:0.82rem;color:var(--muted);"></div>
     </div>
   </div>
-  <div class="admin-toolbar">
+  <div class="admin-toolbar" id="admin-toolbar-wrap" style="display:none">
     <input class="admin-search" id="admin-search" placeholder="Buscar modelo..." oninput="renderAdmin()">
     <button class="btn btn-primary" onclick="openAdd()">+ Agregar</button>
     <button class="btn btn-danger" onclick="resetPhotos()">&#128247; Reset fotos</button>
@@ -323,7 +323,7 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
   </div>
   <div class="section-box">
     <div class="section-head" onclick="toggleModels()" style="cursor:pointer;">&#127920; Modelos <span id="admin-count"></span> <span id="models-toggle" style="float:right;color:var(--muted);font-size:0.8rem;">&#9650; ocultar</span></div>
-    <div id="admin-list-wrap"><div id="admin-list"></div></div>
+    <div id="admin-list-wrap" style="display:none"><div id="admin-list"></div></div>
   </div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
     <div style="font-size:0.9rem;font-weight:800;color:var(--accent2);">&#128200; Estad&#237;sticas</div>
@@ -426,11 +426,19 @@ let cfg={q:5,t:5}, playerName='', lastScore=0;
 
 /* ── NAV ── */
 function goTo(v){
+  const currentView = document.querySelector('.view.active')?.id;
+  if(currentView==='view-quiz' && v!=='quiz' && v!=='results'){
+    clearTimers();
+    const overlay=document.getElementById('countdown-overlay');
+    if(overlay) overlay.style.display='none';
+    if(qNum>0) saveIncompleteGame();
+    qNum=0; qTotal=0; qQueue=[];
+  }
   document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
   document.getElementById('view-'+v).classList.add('active');
   document.querySelectorAll('.nav-tab').forEach((t,i)=>t.classList.toggle('active',
     (v==='catalog'&&i===0)||((v==='setup'||v==='quiz'||v==='results')&&i===1)||(v==='ranking'&&i===2)||(v==='admin'&&i===3)));
-  if(v==='ranking'){loadRanking();loadResetConfig();}
+  if(v==='ranking'){loadRanking();loadResetConfig();loadWinnersHistory();}
   if(v==='setup'){
     const pw=MACHINES.filter(m=>m.photo_url).length;
     const w=document.getElementById('no-img-warn');if(w)w.style.display=pw<4?'block':'none';
@@ -561,15 +569,15 @@ async function preloadAndCountdown(pl){
   const cdBar = document.getElementById('cd-bar');
   overlay.style.display = 'flex';
 
-  const toLoad = qQueue.map(i => pl[i]).filter(m => m.photo_url);
-  const failed = new Set();
+  // Build list of machines to preload from current qQueue
+  const toLoad = qQueue.map(i => pl[i]).filter(m => m && m.photo_url);
   let loaded = 0;
+  const failed = new Set();
 
   cdStatus.textContent = 'Cargando imágenes... 0/' + toLoad.length;
   cdBar.style.width = '0%';
 
   await Promise.all(toLoad.map(m => new Promise(resolve => {
-    // Already cached — skip
     if(imgCache[m.photo_url] && imgCache[m.photo_url] !== 'error'){
       loaded++;
       cdStatus.textContent = 'Cargando imágenes... ' + loaded + '/' + toLoad.length;
@@ -585,7 +593,6 @@ async function preloadAndCountdown(pl){
       resolve();
     };
     img.onerror = () => {
-      // Mark as failed — will be skipped in quiz
       imgCache[m.photo_url] = 'error';
       failed.add(m.photo_url);
       loaded++;
@@ -596,13 +603,19 @@ async function preloadAndCountdown(pl){
     img.src = m.photo_url;
   })));
 
-  // Remove failed images from queue
+  // Only rebuild qQueue if there were failures (don't touch it otherwise)
   if(failed.size > 0){
-    const before = qQueue.length;
-    const validPl = pl.filter(m => imgCache[m.photo_url] && imgCache[m.photo_url] !== 'error');
-    qQueue = shuffle(validPl.map((_,i)=>i)).slice(0, qTotal);
+    // Filter qQueue to remove failed images
+    qQueue = qQueue.filter(i => {
+      const m = pl[i];
+      return m && m.photo_url && imgCache[m.photo_url] !== 'error';
+    });
     qTotal = qQueue.length;
-    if(qTotal < 4){ overlay.style.display='none'; alert('No hay suficientes imágenes disponibles. Verifica tu conexión.'); return; }
+    if(qTotal < 4){
+      overlay.style.display = 'none';
+      alert('No hay suficientes imágenes disponibles. Verifica tu conexión.');
+      return;
+    }
   }
 
   // Countdown 3-2-1
@@ -1143,7 +1156,7 @@ function toggleSection(wrapId, btnId){
 function toggleModels(){
   const wrap = document.getElementById('admin-list-wrap');
   const btn = document.getElementById('models-toggle');
-  const toolbar = document.querySelector('.admin-toolbar');
+  const toolbar = document.getElementById('admin-toolbar-wrap');
   if(wrap.style.display==='none'){
     wrap.style.display='';
     toolbar.style.display='';
