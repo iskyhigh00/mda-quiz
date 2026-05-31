@@ -221,8 +221,9 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
     <div class="form-group">
       <label class="form-label">N&#250;mero de preguntas</label>
       <div class="chips">
-        <div class="chip active" onclick="pickChip('q',5,this)">5</div>
-        <div class="chip" onclick="pickChip('q',10,this)">10</div>
+        <div class="chip active" onclick="pickChip('q',5,this)">5 <span style="font-size:0.65rem;opacity:0.8;">(max 1000)</span></div>
+        <div class="chip" onclick="pickChip('q',10,this)">10 <span style="font-size:0.65rem;opacity:0.8;">(max 1200)</span></div>
+        <div class="chip" onclick="pickChip('q',20,this)">20 <span style="font-size:0.65rem;opacity:0.8;">(max 1300)</span></div>
       </div>
     </div>
     <div class="form-group">
@@ -286,14 +287,14 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
   </div>
   <button class="play-again" onclick="goTo('setup')">&#8635; Jugar de nuevo</button>
   <div class="section-box">
-    <div class="lb-head">&#127942; Puntajes <button class="lb-clear" onclick="clearScores()">Borrar</button></div>
+    <div class="lb-head">&#127942; Puntajes</div>
     <div id="lb-body"><div class="loading">Cargando...</div></div>
   </div>
 </div>
 <div id="view-ranking" class="view">
   <div id="prize-banner-wrap"></div>
   <div class="section-box">
-    <div class="lb-head">&#127942; Ranking global <button class="lb-clear" onclick="clearScores()">Borrar tabla</button></div>
+    <div class="lb-head">&#127942; Ranking global</div>
     <div id="ranking-lb-body"><div class="loading">Cargando...</div></div>
   </div>
   <div class="section-box" style="margin-top:18px;">
@@ -327,6 +328,23 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
     <div id="admin-list-wrap" style="display:none"><div id="admin-list"></div></div>
   </div>
   
+  <!-- SEASONS HISTORY -->
+  <div class="section-box" style="margin-bottom:18px;">
+    <div class="section-head" onclick="toggleSection('seasons-wrap','toggle-seasons')" style="cursor:pointer;">
+      &#128197; Historial por per&#237;odo
+      <span id="toggle-seasons" style="float:right;color:var(--muted);font-size:0.8rem;">&#9660; mostrar</span>
+    </div>
+    <div id="seasons-wrap" style="display:none;">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select id="season-select" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:0.85rem;outline:none;cursor:pointer;" onchange="loadSeasonData()">
+          <option value="">-- Seleccionar per&#237;odo --</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="loadSeasonList()">&#8635; Actualizar</button>
+      </div>
+      <div id="season-data"><div class="no-data" style="padding:20px;">Selecciona un per&#237;odo.</div></div>
+    </div>
+  </div>
+
   <!-- SCORES MANAGEMENT -->
   <div class="section-box" style="margin-bottom:18px;">
     <div class="section-head" onclick="toggleSection('scores-mgmt-wrap','toggle-scores-mgmt'); if(document.getElementById('scores-mgmt-wrap').style.display!=='none') loadScoresMgmt();" style="cursor:pointer;">
@@ -742,7 +760,7 @@ async function endQuiz(){
   document.getElementById('r-name').textContent=playerName;
   document.getElementById('r-score').textContent=qScore;
   // Normalize score to base 10 questions so all modes are comparable
-  const targetMax = qTotal <= 5 ? 1000 : 1200;
+  const targetMax = qTotal <= 5 ? 1000 : qTotal <= 10 ? 1200 : 1300;
   const normalizedScore = Math.round(qScore * targetMax / (qTotal * 100));
   lastScore = normalizedScore;
   document.getElementById('r-sub').textContent=qCorrect+' correctas de '+qTotal+' · '+cfg.t+'s';
@@ -755,17 +773,24 @@ async function endQuiz(){
 }
 
 /* ── SCORES ── */
-async function saveScore(name,pts,correct,total,sec,accuracy){try{await sbPost('/rest/v1/scores',{name,pts,correct,total,timer_sec:sec,accuracy,completed:true});}catch(e){}}
+async function saveScore(name,pts,correct,total,sec,accuracy){try{await sbPost('/rest/v1/scores',{name,pts,correct,total,timer_sec:sec,accuracy,completed:true,season:'current'});}catch(e){}}
 async function recordAnswer(mn,correct,timeMs,pts){try{await sbPost('/rest/v1/quiz_answers',{player_name:playerName,machine_name:mn,correct,time_ms:timeMs,pts,timer_sec:cfg.t});}catch(e){}}
 function getClaveHora(){const n=new Date();return String(n.getHours()).padStart(2,'0')+String(n.getMinutes()).padStart(2,'0');}
 
 async function clearScores(){
   const input=prompt('Clave:');if(!input)return;
   if(input.trim()!==getClaveHora()){alert('Clave incorrecta.');return;}
+  if(!confirm('Los puntajes actuales se archivarán (no se borran). ¿Continuar?'))return;
   try{
-    const [r1,r2]=await Promise.all([sbDelete('/rest/v1/scores?id=gt.0'),sbDelete('/rest/v1/quiz_answers?id=gt.0')]);
-    if(r1.ok||r1.status===204){alert('Puntajes borrados.');renderLeaderboard();loadRanking();}
-    else{const t=await r1.text();alert('Error '+r1.status+': '+t);}
+    const seasonLabel='Archivado '+new Date().toLocaleDateString('es-CL');
+    const [r1,r2]=await Promise.all([
+      sbFetch('/rest/v1/scores?season=eq.current',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({season:seasonLabel})}),
+      sbFetch('/rest/v1/quiz_answers?season=eq.current',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({season:seasonLabel})})
+    ]);
+    if(r1.ok||r1.status===204){
+      alert('Puntajes archivados como '+seasonLabel+'.');
+      renderLeaderboard();loadRanking();
+    }else{const t=await r1.text();alert('Error '+r1.status+': '+t);}
   }catch(e){alert('Error: '+e.message);}
 }
 
@@ -773,16 +798,16 @@ async function renderLeaderboard(){
   const body=document.getElementById('lb-body');if(!body)return;
   body.innerHTML='<div class="loading">Cargando...</div>';
   try{
-    const s=(await sbGet('/rest/v1/scores?order=pts.desc&limit=500')).filter(x=>x.completed!==false);
+    const s=(await sbGet('/rest/v1/scores?season=eq.current&order=pts.desc&limit=500')).filter(x=>x.completed!==false);
     if(!s.length){body.innerHTML='<div class="no-data">Sin puntajes.</div>';return;}
     // Group by name, keep best score
     const best={};
     s.forEach(x=>{if(!best[x.name]||x.pts>best[x.name].pts)best[x.name]=x;});
     const top=Object.values(best).sort((a,b)=>b.pts-a.pts).slice(0,50);
     const M=['&#129351;','&#129352;','&#129353;'];
-    body.innerHTML='<table><thead><tr><th>#</th><th>Nombre</th><th>Mejor puntaje</th><th>Prec.</th><th>Seg.</th><th>Fecha</th></tr></thead><tbody>'+
+    body.innerHTML='<table><thead><tr><th>#</th><th>Nombre</th><th>Mejor puntaje</th><th>Preguntas</th><th>Prec.</th><th>Seg.</th><th>Fecha</th></tr></thead><tbody>'+
       top.map((x,i)=>{const f=new Date(x.created_at).toLocaleDateString('es-CL');const me=x.name===playerName&&x.pts===lastScore;
-        return '<tr class="rank-'+(i+1)+' '+(me?'me':'')+'"><td>'+(M[i]||i+1)+'</td><td><strong>'+x.name+'</strong></td><td style="color:var(--gold);font-weight:800">'+x.pts+'</td><td>'+(x.accuracy||0)+'%</td><td>'+(x.timer_sec||'?')+'s</td><td style="color:var(--muted)">'+f+'</td></tr>';
+        return '<tr class="rank-'+(i+1)+' '+(me?'me':'')+'"><td>'+(M[i]||i+1)+'</td><td><strong>'+x.name+'</strong></td><td style="color:var(--gold);font-weight:800">'+x.pts+'</td><td style="color:var(--accent2);font-size:0.78rem;">'+(x.total||'?')+' MDAs</td><td>'+(x.accuracy||0)+'%</td><td>'+(x.timer_sec||'?')+'s</td><td style="color:var(--muted)">'+f+'</td></tr>';
       }).join('')+'</tbody></table>';
   }catch(e){body.innerHTML='<div class="no-data">Error: '+e.message+'</div>';}
 }
@@ -791,7 +816,7 @@ async function loadRanking(){
   const body=document.getElementById('ranking-lb-body');if(!body)return;
   body.innerHTML='<div class="loading">Cargando...</div>';
   try{
-    const r=await sbFetch('/rest/v1/scores?completed=eq.true&order=pts.desc&limit=500');
+    const r=await sbFetch('/rest/v1/scores?season=eq.current&completed=eq.true&order=pts.desc&limit=500');
     if(!r.ok){const e=await r.text();body.innerHTML='<div class="no-data">Error '+r.status+': '+e+'</div>';return;}
     const s=await r.json();
     if(!s.length){body.innerHTML='<div class="no-data">Sin puntajes aun!</div>';return;}
@@ -800,9 +825,9 @@ async function loadRanking(){
     s.forEach(x=>{if(!best[x.name]||x.pts>best[x.name].pts)best[x.name]=x;});
     const top=Object.values(best).sort((a,b)=>b.pts-a.pts).slice(0,100);
     const M=['&#129351;','&#129352;','&#129353;'];
-    body.innerHTML='<table><thead><tr><th>#</th><th>Nombre</th><th>Mejor puntaje</th><th>Prec.</th><th>Seg.</th><th>Fecha</th></tr></thead><tbody>'+
+    body.innerHTML='<table><thead><tr><th>#</th><th>Nombre</th><th>Mejor puntaje</th><th>Preguntas</th><th>Prec.</th><th>Seg.</th><th>Fecha</th></tr></thead><tbody>'+
       top.map((x,i)=>{const f=new Date(x.created_at).toLocaleDateString('es-CL');
-        return '<tr class="rank-'+(i+1)+'"><td>'+(M[i]||i+1)+'</td><td><strong>'+x.name+'</strong></td><td style="color:var(--gold);font-weight:800">'+x.pts+'</td><td>'+(x.accuracy||0)+'%</td><td>'+(x.timer_sec||'?')+'s</td><td style="color:var(--muted)">'+f+'</td></tr>';
+        return '<tr class="rank-'+(i+1)+'"><td>'+(M[i]||i+1)+'</td><td><strong>'+x.name+'</strong></td><td style="color:var(--gold);font-weight:800">'+x.pts+'</td><td style="color:var(--accent2);font-size:0.78rem;">'+(x.total||'?')+' MDAs</td><td>'+(x.accuracy||0)+'%</td><td>'+(x.timer_sec||'?')+'s</td><td style="color:var(--muted)">'+f+'</td></tr>';
       }).join('')+'</tbody></table>';
   }catch(e){body.innerHTML='<div class="no-data">Error: '+e.message+'</div>';}
 }
@@ -884,46 +909,69 @@ async function checkAutoReset(){
 
 async function executeAutoReset(){
   try{
-    // Get current top scores
-    const scores = await sbGet('/rest/v1/scores?order=pts.desc&limit=500');
-    if(!scores.length){localStorage.setItem('mda_last_reset', resetConfig.resetDate);return;}
-    
-    // Group by player, keep best
+    // Get current season scores (not archived)
+    const scores = await sbGet('/rest/v1/scores?season=eq.current&order=pts.desc&limit=500&completed=eq.true');
+    if(!scores.length){
+      // No scores yet — just update the reset date and move on
+      localStorage.setItem('mda_last_reset', resetConfig.resetDate);
+      await sbFetch('/rest/v1/settings',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:'reset_date',value:''})});
+      resetConfig.resetDate='';
+      return;
+    }
+
+    // Group by player, find winner (excluding obrist)
     const best={};
     scores.forEach(x=>{if(!best[x.name]||x.pts>best[x.name].pts)best[x.name]=x;});
-    const top = Object.values(best).sort((a,b)=>b.pts-a.pts);
-    // obrist is excluded from winning (appears in ranking but not eligible for prize)
-    const EXCLUDED = ['obrist'];
-    const winner = top.find(x=>!EXCLUDED.includes(x.name.toLowerCase().trim()));
-    if(!winner){localStorage.setItem('mda_last_reset', resetConfig.resetDate);return;}
-    const historyRows = top.slice(0,10).map((s,i)=>({
-      period_label: 'Hasta el '+resetConfig.resetDate,
-      reset_date: resetConfig.resetDate,
-      rank: i+1,
-      player_name: s.name,
-      pts: s.pts,
-      accuracy: s.accuracy||0,
-      timer_sec: s.timer_sec||5,
-      prize: i===0 ? resetConfig.prize : null
-    }));
-    
-    await sbPost('/rest/v1/winners_history', historyRows);
-    
-    // Clear scores and quiz_answers
-    await Promise.all([
-      sbDelete('/rest/v1/scores?id=gt.0'),
-      sbDelete('/rest/v1/quiz_answers?id=gt.0')
-    ]);
-    
-    // Mark as done
+    const top=Object.values(best).sort((a,b)=>b.pts-a.pts);
+    const EXCLUDED=['obrist'];
+    const winner=top.find(x=>!EXCLUDED.includes(x.name.toLowerCase().trim()));
+
+    // Build season label
+    const seasonLabel=resetConfig.resetDate.replace(/\//g,'-');
+
+    // Save winner to history FIRST — verify before archiving
+    if(winner){
+      const histRow={
+        period_label:resetConfig.resetDate,
+        reset_date:resetConfig.resetDate,
+        rank:1,
+        player_name:winner.name,
+        pts:winner.pts,
+        accuracy:winner.accuracy||0,
+        timer_sec:winner.timer_sec||5,
+        prize:resetConfig.prize||''
+      };
+      const r=await sbPost('/rest/v1/winners_history',histRow);
+      if(!r.ok){
+        const e=await r.text();
+        console.error('Failed to save winner history:',e);
+        alert('ERROR: No se pudo guardar el historial. Reset cancelado para proteger los datos.');
+        return; // ABORT — do not archive
+      }
+    }
+
+    // Archive scores: update season column (NEVER DELETE)
+    await sbFetch('/rest/v1/scores?season=eq.current',{
+      method:'PATCH',
+      headers:{'Content-Type':'application/json','apikey':KEY,'Authorization':'Bearer '+KEY},
+      body:JSON.stringify({season:seasonLabel})
+    });
+    await sbFetch('/rest/v1/quiz_answers?season=eq.current',{
+      method:'PATCH',
+      headers:{'Content-Type':'application/json','apikey':KEY,'Authorization':'Bearer '+KEY},
+      body:JSON.stringify({season:seasonLabel})
+    });
+
+    // Mark done
     localStorage.setItem('mda_last_reset', resetConfig.resetDate);
-    
-    // Clear reset date in settings so it doesn't repeat
     await sbFetch('/rest/v1/settings',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:'reset_date',value:''})});
     resetConfig.resetDate='';
-    
-    console.log('Auto reset executed. Winner:', winner.name, winner.pts);
-  }catch(e){console.error('Auto reset failed:',e);}
+
+    console.log('Season archived as', seasonLabel, '— winner:', winner?.name, winner?.pts);
+  }catch(e){
+    console.error('executeAutoReset failed:',e);
+    alert('Error en reset: '+e.message+'. Los datos NO fueron borrados.');
+  }
 }
 
 async function loadWinnersHistory(){
@@ -953,9 +1001,9 @@ async function loadWinnersHistory(){
 
 /* ── ADMIN ── */
 async function adminLogin(){
-  if(adminUnlocked){goTo('admin');renderAdmin();loadStats();loadResetConfig();return;}
+  if(adminUnlocked){goTo('admin');renderAdmin();loadStats();loadResetConfig();loadSeasonList();return;}
   const input=prompt('Clave:');if(!input)return;
-  if(input.trim()===getClaveHora()){adminUnlocked=true;goTo('admin');renderAdmin();loadStats();loadResetConfig();}
+  if(input.trim()===getClaveHora()){adminUnlocked=true;goTo('admin');renderAdmin();loadStats();loadResetConfig();loadSeasonList();}
   else alert('Clave incorrecta.');
 }
 function renderAdmin(){
@@ -1126,8 +1174,8 @@ function resetPhotos(){
 async function loadStats(){
   ['stats-global','stats-players','stats-machines-acc','stats-speed','stats-activity'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='<div class="loading">Cargando...</div>';});
   const [allScores,answers]=await Promise.all([
-    sbGet('/rest/v1/scores?order=pts.desc&limit=1000'),
-    sbGet('/rest/v1/quiz_answers?order=created_at.desc&limit=5000')
+    sbGet('/rest/v1/scores?season=eq.current&order=pts.desc&limit=1000'),
+    sbGet('/rest/v1/quiz_answers?season=eq.current&order=created_at.desc&limit=5000')
   ]);
   const scores = allScores.filter(s=>s.completed!==false); // valid games only
   const incomplete = allScores.filter(s=>s.completed===false);
@@ -1213,7 +1261,7 @@ async function loadScoresMgmt(){
   if(!list) return;
   list.innerHTML = '<div class="loading">Cargando...</div>';
   try{
-    allScoresMgmt = await sbGet('/rest/v1/scores?order=pts.desc&limit=500');
+    allScoresMgmt = await sbGet('/rest/v1/scores?season=eq.current&order=pts.desc&limit=500');
     renderScoresMgmt();
   }catch(e){ list.innerHTML = '<div class="no-data">Error: '+e.message+'</div>'; }
 }
@@ -1314,6 +1362,58 @@ async function deleteScore(id){
     await sbDelete('/rest/v1/scores?id=eq.'+id);
     await loadScoresMgmt();
   }catch(e){ alert('Error: '+e.message); }
+}
+
+/* ── SEASONS HISTORY ── */
+async function loadSeasonList(){
+  try{
+    const rows=await sbGet('/rest/v1/scores?select=season&order=season.asc');
+    const seasons=[...new Set(rows.map(r=>r.season).filter(s=>s&&s!=='current'))];
+    const sel=document.getElementById('season-select');
+    if(!sel)return;
+    sel.innerHTML='<option value="">-- Seleccionar per\u00EDodo --</option>';
+    if(!seasons.length){sel.innerHTML='<option value="">Sin per\u00EDodos archivados</option>';return;}
+    seasons.reverse().forEach(s=>{
+      const opt=document.createElement('option');
+      opt.value=s;opt.textContent=s;
+      sel.appendChild(opt);
+    });
+  }catch(e){console.error('loadSeasonList:',e);}
+}
+
+async function loadSeasonData(){
+  const season=document.getElementById('season-select')?.value;
+  const body=document.getElementById('season-data');
+  if(!season){body.innerHTML='<div class="no-data">Selecciona un per\u00EDodo.</div>';return;}
+  body.innerHTML='<div class="loading">Cargando...</div>';
+  try{
+    const scores=await sbGet('/rest/v1/scores?season=eq.'+encodeURIComponent(season)+'&order=pts.desc&limit=500');
+    if(!scores.length){body.innerHTML='<div class="no-data">Sin datos.</div>';return;}
+    const best={};
+    scores.filter(s=>s.completed!==false).forEach(x=>{if(!best[x.name]||x.pts>best[x.name].pts)best[x.name]=x;});
+    const top=Object.values(best).sort((a,b)=>b.pts-a.pts);
+    const complete=scores.filter(s=>s.completed!==false).length;
+    const incomplete=scores.filter(s=>s.completed===false).length;
+    const M=['\u{1F947}','\u{1F948}','\u{1F949}'];
+    body.innerHTML=
+      '<div style="padding:10px 16px;display:flex;gap:16px;font-size:0.78rem;color:var(--muted);border-bottom:1px solid var(--border);">'+
+        '<span>Completas: <strong style="color:var(--green)">'+complete+'</strong></span>'+
+        '<span>Incompletas: <strong style="color:var(--red)">'+incomplete+'</strong></span>'+
+        '<span>Jugadores: <strong style="color:var(--accent2)">'+Object.keys(best).length+'</strong></span>'+
+      '</div>'+
+      '<table><thead><tr><th>#</th><th>Jugador</th><th>Mejor puntaje</th><th>Preguntas</th><th>Prec.</th><th>Seg.</th><th>Fecha</th></tr></thead><tbody>'+
+      top.map((x,i)=>{
+        const f=new Date(x.created_at).toLocaleDateString('es-CL');
+        return '<tr class="rank-'+(i+1)+'">'+
+          '<td>'+(M[i]||i+1)+'</td>'+
+          '<td><strong>'+x.name+'</strong></td>'+
+          '<td style="color:var(--gold);font-weight:800">'+x.pts+'</td>'+
+          '<td style="color:var(--accent2);font-size:0.78rem;">'+(x.total||'?')+' MDAs</td>'+
+          '<td>'+(x.accuracy||0)+'%</td>'+
+          '<td>'+(x.timer_sec||'?')+'s</td>'+
+          '<td style="color:var(--muted)">'+f+'</td></tr>';
+      }).join('')+'</tbody></table>';
+  }catch(e){body.innerHTML='<div class="no-data">Error: '+e.message+'</div>';}
 }
 
 loadMachines();
