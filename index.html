@@ -328,6 +328,21 @@ tbody tr.me td{background:rgba(124,58,237,0.08);}
     <div id="admin-list-wrap" style="display:none"><div id="admin-list"></div></div>
   </div>
   
+  <div class="section-box" style="margin-bottom:18px;">
+    <div class="section-head">&#127919; Puntaje m&#225;ximo por cantidad de preguntas
+      <button class="btn btn-primary btn-sm" onclick="saveMaxPts()">Guardar</button>
+    </div>
+    <div style="padding:14px;display:flex;gap:12px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:120px;"><label class="form-label">5 preguntas</label>
+        <input class="modal-input" id="max-pts-5" type="number" placeholder="1000" min="100" max="9999"></div>
+      <div style="flex:1;min-width:120px;"><label class="form-label">10 preguntas</label>
+        <input class="modal-input" id="max-pts-10" type="number" placeholder="1200" min="100" max="9999"></div>
+      <div style="flex:1;min-width:120px;"><label class="form-label">20 preguntas</label>
+        <input class="modal-input" id="max-pts-20" type="number" placeholder="1300" min="100" max="9999"></div>
+    </div>
+    <div style="padding:0 14px 12px;font-size:0.75rem;color:var(--muted);">Se reflejan en el quiz y en los chips de selecci&#243;n.</div>
+  </div>
+
   <!-- SEASONS HISTORY -->
   <div class="section-box" style="margin-bottom:18px;">
     <div class="section-head" onclick="toggleSection('seasons-wrap','toggle-seasons')" style="cursor:pointer;">
@@ -760,7 +775,7 @@ async function endQuiz(){
   document.getElementById('r-name').textContent=playerName;
   document.getElementById('r-score').textContent=qScore;
   // Normalize score to base 10 questions so all modes are comparable
-  const targetMax = qTotal <= 5 ? 1000 : qTotal <= 10 ? 1200 : 1300;
+  const targetMax = qTotal <= 5 ? (maxPtsConfig[5]||1000) : qTotal <= 10 ? (maxPtsConfig[10]||1200) : (maxPtsConfig[20]||1300);
   const normalizedScore = Math.round(qScore * targetMax / (qTotal * 100));
   lastScore = normalizedScore;
   document.getElementById('r-sub').textContent=qCorrect+' correctas de '+qTotal+' · '+cfg.t+'s';
@@ -1001,9 +1016,9 @@ async function loadWinnersHistory(){
 
 /* ── ADMIN ── */
 async function adminLogin(){
-  if(adminUnlocked){goTo('admin');renderAdmin();loadStats();loadResetConfig();loadSeasonList();return;}
+  if(adminUnlocked){goTo('admin');renderAdmin();loadStats();loadResetConfig();loadSeasonList();loadMaxPts();return;}
   const input=prompt('Clave:');if(!input)return;
-  if(input.trim()===getClaveHora()){adminUnlocked=true;goTo('admin');renderAdmin();loadStats();loadResetConfig();loadSeasonList();}
+  if(input.trim()===getClaveHora()){adminUnlocked=true;goTo('admin');renderAdmin();loadStats();loadResetConfig();loadSeasonList();loadMaxPts();}
   else alert('Clave incorrecta.');
 }
 function renderAdmin(){
@@ -1416,8 +1431,52 @@ async function loadSeasonData(){
   }catch(e){body.innerHTML='<div class="no-data">Error: '+e.message+'</div>';}
 }
 
+/* ── MAX PTS CONFIG ── */
+let maxPtsConfig = {5: 1000, 10: 1200, 20: 1300};
+
+async function loadMaxPts(){
+  try{
+    const rows = await sbGet('/rest/v1/settings?key=in.(max_pts_5,max_pts_10,max_pts_20)');
+    rows.forEach(r=>{
+      const q = parseInt(r.key.replace('max_pts_',''));
+      maxPtsConfig[q] = parseInt(r.value)||maxPtsConfig[q];
+    });
+    [5,10,20].forEach(q=>{
+      const el=document.getElementById('max-pts-'+q);
+      if(el) el.value=maxPtsConfig[q];
+    });
+    updateChipLabels();
+  }catch(e){console.error('loadMaxPts:',e);}
+}
+
+async function saveMaxPts(){
+  const vals = {
+    5: parseInt(document.getElementById('max-pts-5')?.value)||1000,
+    10: parseInt(document.getElementById('max-pts-10')?.value)||1200,
+    20: parseInt(document.getElementById('max-pts-20')?.value)||1300
+  };
+  try{
+    await Promise.all([5,10,20].map(q=>
+      sbFetch('/rest/v1/settings',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:'max_pts_'+q,value:String(vals[q])})})
+    ));
+    maxPtsConfig = vals;
+    updateChipLabels();
+    alert('Guardado.');
+  }catch(e){alert('Error: '+e.message);}
+}
+
+function updateChipLabels(){
+  document.querySelectorAll('.chips .chip').forEach(c=>{
+    const fn = c.getAttribute('onclick')||'';
+    if(fn.includes("'q',5"))  c.innerHTML='5 <span style="font-size:0.65rem;opacity:0.8;">(max '+maxPtsConfig[5]+')</span>';
+    if(fn.includes("'q',10")) c.innerHTML='10 <span style="font-size:0.65rem;opacity:0.8;">(max '+maxPtsConfig[10]+')</span>';
+    if(fn.includes("'q',20")) c.innerHTML='20 <span style="font-size:0.65rem;opacity:0.8;">(max '+maxPtsConfig[20]+')</span>';
+  });
+}
+
 loadMachines();
 loadResetConfig();
+loadMaxPts();
 </script>
 </body>
 </html>
