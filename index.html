@@ -908,64 +908,63 @@ async function saveResetConfig(){
 
 async function checkAutoReset(){
   if(!resetConfig.resetDate) return;
-  // Parse DD/MM/YYYY
   const parts = resetConfig.resetDate.split('/');
   if(parts.length!==3) return;
   const resetMoment = new Date(parts[2], parts[1]-1, parts[0], 23, 59, 59);
   const now = new Date();
-  if(now >= resetMoment){
-    // Check if already reset for this date (avoid double reset)
-    const lastReset = localStorage.getItem('mda_last_reset');
-    if(lastReset === resetConfig.resetDate) return;
-    // Execute reset
-    await executeAutoReset();
-  }
+  if(now < resetMoment) return;
+  // Check in SUPABASE (not localStorage) if this date was already processed
+  try{
+    const done = await sbGet('/rest/v1/settings?key=eq.last_reset_done');
+    const lastDone = done[0]?.value || '';
+    if(lastDone === resetConfig.resetDate) return; // already processed across all devices
+  }catch(e){ console.error('checkAutoReset:',e); return; }
+  await executeAutoReset();
 }
 
 async function executeAutoReset(){
   try{
-    // Get current season scores (not archived)
-    const scores = await sbGet('/rest/v1/scores?season=eq.current&order=pts.desc&limit=500&completed=eq.true');
-    if(!scores.length){
-      // No scores yet — just update the reset date and move on
-      localStorage.setItem('mda_last_reset', resetConfig.resetDate);
-      await sbFetch('/rest/v1/settings',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:'reset_date',value:''})});
-      resetConfig.resetDate='';
-      return;
-    }
+    const resetDateUsed = resetConfig.resetDate;
+    const prizeUsed = resetConfig.prize || '';
+    // Get current season completed scores
+    const scores = await sbGet('/rest/v1/scores?season=eq.current&completed=eq.true&order=pts.desc&limit=500');
 
-    // Group by player, find winner (excluding obrist)
-    const best={};
-    scores.forEach(x=>{if(!best[x.name]||x.pts>best[x.name].pts)best[x.name]=x;});
-    const top=Object.values(best).sort((a,b)=>b.pts-a.pts);
-    const EXCLUDED=['obrist'];
-    const winner=top.find(x=>!EXCLUDED.includes(x.name.toLowerCase().trim()));
+    // Build season label from date
+    const seasonLabel = resetDateUsed.replace(/\//g,'-');
 
-    // Build season label
-    const seasonLabel=resetConfig.resetDate.replace(/\//g,'-');
+    if(scores.length){
+      // Group by player, best score each
+      const best={};
+      scores.forEach(x=>{if(!best[x.name]||x.pts>best[x.name].pts)best[x.name]=x;});
+      // Sort all, EXCLUDE obrist entirely from history
+      const EXCLUDED=['obrist'];
+      const ranked = Object.values(best)
+        .filter(x=>!EXCLUDED.includes(x.name.toLowerCase().trim()))
+        .sort((a,b)=>b.pts-a.pts);
 
-    // Save winner to history FIRST — verify before archiving
-    if(winner){
-      const histRow={
-        period_label:resetConfig.resetDate,
-        reset_date:resetConfig.resetDate,
-        rank:1,
-        player_name:winner.name,
-        pts:winner.pts,
-        accuracy:winner.accuracy||0,
-        timer_sec:winner.timer_sec||5,
-        prize:resetConfig.prize||''
-      };
-      const r=await sbPost('/rest/v1/winners_history',histRow);
-      if(!r.ok){
-        const e=await r.text();
-        console.error('Failed to save winner history:',e);
-        alert('ERROR: No se pudo guardar el historial. Reset cancelado para proteger los datos.');
-        return; // ABORT — do not archive
+      if(ranked.length){
+        // Save top 10 to history (winner = rank 1, with prize)
+        const histRows = ranked.slice(0,10).map((s,i)=>({
+          period_label: resetDateUsed,
+          reset_date: resetDateUsed,
+          rank: i+1,
+          player_name: s.name,
+          pts: s.pts,
+          accuracy: s.accuracy||0,
+          timer_sec: s.timer_sec||5,
+          prize: i===0 ? prizeUsed : ''
+        }));
+        const r = await sbPost('/rest/v1/winners_history', histRows);
+        if(!r.ok){
+          const e = await r.text();
+          console.error('Failed to save history:',e);
+          alert('ERROR: No se pudo guardar el historial. Reset cancelado, datos intactos.');
+          return; // ABORT before archiving
+        }
       }
     }
 
-    // Archive scores: update season column (NEVER DELETE)
+    // Archive: move current -> dated season (NEVER DELETE)
     await sbFetch('/rest/v1/scores?season=eq.current',{
       method:'PATCH',
       headers:{'Content-Type':'application/json','apikey':KEY,'Authorization':'Bearer '+KEY},
@@ -977,12 +976,13 @@ async function executeAutoReset(){
       body:JSON.stringify({season:seasonLabel})
     });
 
-    // Mark done
-    localStorage.setItem('mda_last_reset', resetConfig.resetDate);
+    // Record in SUPABASE that this reset is done (prevents re-trigger on other devices)
+    await sbFetch('/rest/v1/settings',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:'last_reset_done',value:resetDateUsed})});
+    // Clear the scheduled reset date
     await sbFetch('/rest/v1/settings',{method:'POST',headers:{'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:'reset_date',value:''})});
     resetConfig.resetDate='';
 
-    console.log('Season archived as', seasonLabel, '— winner:', winner?.name, winner?.pts);
+    console.log('Season archived as', seasonLabel);
   }catch(e){
     console.error('executeAutoReset failed:',e);
     alert('Error en reset: '+e.message+'. Los datos NO fueron borrados.');
@@ -1390,7 +1390,7 @@ async function loadSeasonList(){
     if(!seasons.length){sel.innerHTML='<option value="">Sin per\u00EDodos archivados</option>';return;}
     seasons.reverse().forEach(s=>{
       const opt=document.createElement('option');
-      opt.value=s;opt.textContent=s;
+      opt.value=s;opt.textContent=(s==='temporada_1'?'Período inicial':s);
       sel.appendChild(opt);
     });
   }catch(e){console.error('loadSeasonList:',e);}
